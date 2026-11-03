@@ -1,0 +1,41 @@
+name: run_vla_subtask
+kind: controller
+description: Execute one bounded SmolVLA table-clearing subtask and return fresh observations.
+timeout_s: 600
+parameters:
+  type: object
+  properties:
+    instruction:
+      type: string
+      description: One short pick-and-place or place instruction.
+    max_actions:
+      type: integer
+      minimum: 1
+      maximum: 50
+      default: 10
+    model:
+      type: string
+      default: smolvla
+      description: Name of the registered VLA model device.
+    head_camera:
+      type: string
+      default: camera
+      description: RoboEnv/Franka head camera device name.
+    wrist_camera:
+      type: string
+      default: camera_wrist
+      description: RoboEnv/Franka wrist camera device name.
+    arm:
+      type: string
+      default: arm
+    gripper:
+      type: string
+      default: gripper
+    world:
+      type: string
+      default: world
+    action_hz:
+      type: number
+      default: 30
+  required: [instruction]
+

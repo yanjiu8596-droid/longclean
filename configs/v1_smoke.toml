@@ -1,0 +1,18 @@
+[project]
+name = "tableclear-v1-smoke"
+
+[[scenes]]
+id = "tableclear-01-smoke"
+target_count = 2
+source_task = "libero/libero-10-01"
+objects = ["alphabet soup can", "tomato sauce"]
+
+[[methods]]
+id = "closed_loop_vla"
+max_actions = 10
+max_attempts = 3
+
+[evaluation]
+seeds = [0]
+episodes_per_seed = 1
+

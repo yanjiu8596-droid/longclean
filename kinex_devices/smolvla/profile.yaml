@@ -1,0 +1,80 @@
+name: smolvla
+type: model
+loaded: false
+access:
+  source: user
+  connection:
+    kind: process
+    compute:
+      kind: cuda
+      index: 0
+  driver:
+    entry: driver.py
+    interpreter: ../../model-python/bin/python
+    actions:
+      - read
+      - load
+      - unload
+      - status
+      - infer
+    persistent: true
+    timeout_s: 600
+intrinsics:
+  source: user
+  family: smolvla
+  variant: "lerobot/smolvla_libero@a24f1f380461b665158d52acd140152c79e8b36d"
+  implementation:
+    repository: https://github.com/huggingface/lerobot
+    revision: 772bc21ef1ab17b72e17ebb1593ff78725a21d55
+  artifacts:
+    - name: smolvla_libero
+      path: ../../../models/smolvla_libero
+      source:
+        kind: local
+    - name: smolvlm2_500m_video_instruct
+      path: ../../../models/smolvlm2_500m_video_instruct
+      source:
+        kind: local
+  operations:
+    - name: infer
+      input:
+        type: object
+        properties:
+          obs:
+            type: object
+            properties:
+              camera1:
+                type: string
+                format: path
+              camera2:
+                type: string
+                format: path
+              state:
+                type: array
+                items:
+                  type: number
+                minItems: 8
+                maxItems: 8
+            required: [camera1, camera2, state]
+          task:
+            type: string
+            minLength: 1
+        required: [obs, task]
+      output:
+        type: object
+        properties:
+          actions:
+            type: array
+            items:
+              type: array
+              items:
+                type: number
+              minItems: 7
+              maxItems: 7
+            minItems: 1
+            maxItems: 50
+        required: [actions]
+meta:
+  created_at: "2026-11-03T00:00:00Z"
+  updated_at: "2026-11-03T00:00:00Z"
+

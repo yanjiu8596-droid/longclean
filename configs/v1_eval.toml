@@ -1,0 +1,40 @@
+[project]
+name = "tableclear-v1"
+
+[[scenes]]
+id = "tableclear-01"
+target_count = 2
+source_task = "libero/libero-10-01"
+objects = ["alphabet soup can", "tomato sauce"]
+
+[[scenes]]
+id = "tableclear-02"
+target_count = 2
+source_task = "libero/libero-10-02"
+objects = ["cream cheese box", "butter"]
+
+[[scenes]]
+id = "tableclear-08"
+target_count = 2
+source_task = "libero/libero-10-08"
+objects = ["alphabet soup can", "cream cheese box"]
+
+[[methods]]
+id = "direct_vla"
+max_actions = 10
+max_attempts = 1
+
+[[methods]]
+id = "fixed_checklist_vla"
+max_actions = 10
+max_attempts = 1
+
+[[methods]]
+id = "closed_loop_vla"
+max_actions = 10
+max_attempts = 3
+
+[evaluation]
+seeds = [0, 1, 2]
+episodes_per_seed = 5
+

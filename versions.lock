@@ -1,0 +1,32 @@
+[host]
+os = "Ubuntu 22.04"
+python = "3.12"
+node = "22.23.4"
+npm = "10.9.9"
+uv = "0.13.6"
+
+[upstreams.kinex]
+version = "1.0.0"
+commit = "15207927c6669fe98f1213a3fd05148e0fe938d3"
+
+[upstreams.roboenv]
+version = "1.0.0"
+commit = "dd2a0e3101313deb772db434ee5989648ab96d9f"
+
+[upstreams.libero]
+expected_commit = "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+status = "ready"
+
+[models.smolvla_libero]
+status = "provisioned on GPU host"
+repository = "lerobot/smolvla_libero"
+revision = "a24f1f380461b665158d52acd140152c79e8b36d"
+
+[models.smolvlm2_500m_video_instruct]
+status = "provisioned on GPU host"
+repository = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+revision = "7b375e1b73b11138ff12fe22c8f2822d8fe03467"
+
+[upstreams.lerobot]
+commit = "772bc21ef1ab17b72e17ebb1593ff78725a21d55"
+
