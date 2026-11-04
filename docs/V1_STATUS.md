@@ -16,21 +16,25 @@
 - Remote RoboEnv 1.0.0 development environment.
 - LIBERO source pinned to the RoboEnv expected commit and marked `ready`.
 - LIBERO Panda workspace exported with devices:
-  `arm`, `gripper`, `camera`, `camera_wrist`, `world`.
+  `arm`, `gripper`, `camera`, `camera_wrist`, `smolvla`, `world`.
 
 - LIBERO-specific Python 3.10 simulator environment installed and registered.
-- MuJoCo EGL rendering and `roboenv launch` validated on RTX 4090D.
-- All Kinex devices load and ping successfully.
-- SmolVLA and its pinned SmolVLM2 base model load fully offline.
-- A 50x7 action chunk reaches IK and executes through arm/gripper devices.
-- A 600-action direct-VLA smoke produced preserved before/after images, a
-  sealed RoboEnv terminal record, an `episode_end` JSONL record and CSV summary.
+- Kinex 1.0.0 and Node 22 installed under the persistent data disk.
+- RoboEnv 1.0.0 development environment installed; static and source gates pass.
+- LIBERO source, import probes and bundled 130-task assets verified.
+- SmolVLA Python environment installed against the image's CUDA PyTorch build.
+- SmolVLA and SmolVLM2 base weights downloaded at pinned revisions.
+- Kinex workspace exports all six device profiles and both project tool overrides.
 
 ## Current Result
 
-The direct-VLA smoke completed operationally but `libero-10-01` returned
-`success=false`. RoboEnv reports that Kinex executed absolute joint positions
-through `JOINT_POSITION/set_qpos`, not native LIBERO OSC:
+The new host is currently in no-GPU mode, so simulator launch, EGL camera replay,
+CUDA model loading and motion are intentionally not claimed. Static model checks
+confirm the 8D state, two-camera input, 7D action output and 50-step action chunk.
+
+On the previous GPU host, the direct-VLA smoke completed operationally but
+`libero-10-01` returned `success=false`. RoboEnv reported that Kinex executed
+absolute joint positions through `JOINT_POSITION/set_qpos`, not native LIBERO OSC:
 
 ```text
 control_protocol: absolute_joint_position
@@ -50,9 +54,10 @@ path before running the 135-episode matrix.
 
 ## First GPU Acceptance Gate
 
-1. `roboenv doctor libero` reports a registered reusable interpreter.
+1. Verify `nvidia-smi` and `torch.cuda.is_available()` after switching modes.
 2. `roboenv launch libero/libero-10-01 --port 8123` starts.
-3. `kinex -p "/ping all"` sees all five devices.
-4. `run_vla_subtask` completes one bounded action execution.
-5. `tableclear-01-smoke` produces one complete `episode_end` record.
+3. `kinex -p "/ping all"` sees all six devices.
+4. Load the pinned SmolVLA checkpoint on CUDA.
+5. `run_vla_subtask` completes one bounded action execution.
+6. `tableclear-01-smoke` produces one complete `episode_end` record.
 

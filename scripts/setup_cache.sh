@@ -2,6 +2,8 @@
 set -euo pipefail
 
 DATA_ROOT="${AUTODL_TMP:-/root/autodl-tmp}"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+KINEX_DATA_ROOT="${KINEX_DATA_DIR:-${DATA_ROOT}/kinex-data}"
 
 mkdir -p \
   "${DATA_ROOT}/cache/huggingface" \
@@ -22,6 +24,17 @@ export XDG_CACHE_HOME="${DATA_ROOT}/cache/xdg"
 export TMPDIR="${DATA_ROOT}/tmp"
 export MUJOCO_GL=egl
 
+for path in \
+  "${PROJECT_ROOT}/.venv/bin" \
+  "${KINEX_DATA_ROOT}/node/current/bin" \
+  "${HOME}/.local/bin"; do
+  if [[ -d "${path}" && ":${PATH}:" != *":${path}:"* ]]; then
+    PATH="${path}:${PATH}"
+  fi
+done
+export PATH
+
 printf 'Data root: %s\n' "${DATA_ROOT}"
+printf 'Kinex data: %s\n' "${KINEX_DATA_ROOT}"
 printf 'Source this file in each shell: source scripts/setup_cache.sh\n'
 

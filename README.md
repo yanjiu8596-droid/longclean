@@ -21,11 +21,16 @@ SmolVLA LIBERO path:
 - a one-action device smoke and a deterministic direct-VLA episode runner;
 - Kinex `table-clear` skill template.
 
-The Linux integration runs on the AutoDL GPU host. The direct path has executed
-real LIBERO motion and sealed a native simulator verdict. The current Kinex arm
-path uses absolute joint-position execution rather than LIBERO's native OSC
-controller, so benchmark performance is not yet validated. The first 600-action
-direct-VLA smoke completed operationally but did not solve `libero-10-01`.
+The current AutoDL host has completed the no-GPU preparation: TableClear,
+Kinex, RoboEnv, LIBERO dependencies/assets, the exported device workspace,
+SmolVLA's model environment and both pinned model artifacts are ready. A GPU is
+still required to launch LIBERO and load the policy on CUDA.
+
+On the previous GPU host, the direct path executed real LIBERO motion and sealed
+a native simulator verdict. The current Kinex arm path uses absolute joint-position
+execution rather than LIBERO's native OSC controller, so benchmark performance
+is not yet validated. The first 600-action direct-VLA smoke completed
+operationally but did not solve `libero-10-01`.
 
 ## V1 task
 
@@ -68,7 +73,8 @@ python -m tableclear.cli demo
 
 ## Linux target
 
-The full simulator stack requires Ubuntu and an NVIDIA CUDA GPU:
+CPU-only hosts can install and statically validate all software and model files.
+Running the simulator and CUDA policy requires Ubuntu and an NVIDIA GPU:
 
 ```bash
 bash scripts/setup_cache.sh
