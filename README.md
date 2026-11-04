@@ -104,9 +104,14 @@ Known-working upstream versions are recorded in `versions.lock`.
 
 Do not install Kinex, MuJoCo or LIBERO into the Windows Python environment.
 
-## AutoDL GPU availability
+## AutoDL checks
 
-Check whether the AutoDL instance is online and ready for CUDA work:
+The Codex heartbeat named `AutoDL 宿主 GPU 空闲监控` checks the AutoDL console
+for the current host's `gpu_idle_num / gpu_number`. It reports only when free
+capacity appears and never starts or rents an instance.
+
+After manually starting the instance, check whether it is online and ready for
+CUDA work:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/check_autodl_gpu.ps1
