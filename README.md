@@ -104,6 +104,19 @@ Known-working upstream versions are recorded in `versions.lock`.
 
 Do not install Kinex, MuJoCo or LIBERO into the Windows Python environment.
 
+## AutoDL GPU availability
+
+Check whether the AutoDL instance is online and ready for CUDA work:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/check_autodl_gpu.ps1
+```
+
+Exit code `0` means the instance changed from not-ready to GPU/CUDA-ready.
+Codes `1` and `2` mean the instance is unreachable or has no GPU; code `3`
+means it was already ready and has already been reported. Override `-SshHost`,
+`-Port` and `-IdentityFile` when AutoDL returns a new connection address.
+
 ## Repository layout
 
 ```text
