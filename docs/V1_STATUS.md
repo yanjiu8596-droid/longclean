@@ -21,6 +21,8 @@
 - LIBERO-specific Python 3.10 simulator environment installed and registered.
 - Kinex 1.0.0 and Node 22 installed under the persistent data disk.
 - RoboEnv 1.0.0 development environment installed; static and source gates pass.
+- RoboEnv full CPU suite: 1558 passed, 130 skipped; privacy audit and wheel
+  build/import checks pass.
 - LIBERO source, import probes and bundled 130-task assets verified.
 - SmolVLA Python environment installed against the image's CUDA PyTorch build.
 - SmolVLA and SmolVLM2 base weights downloaded at pinned revisions.
