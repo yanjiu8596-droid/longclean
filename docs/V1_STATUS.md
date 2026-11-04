@@ -1,6 +1,9 @@
 # V1 Status
 
-## Completed
+## Historical Completed Work
+
+The remote preparation and runtime results below are saved historical records,
+not a fresh inspection of the server. Current server/GPU readiness is unknown.
 
 - Core object state machine and bounded retry behavior.
 - One-episode runner that requests the simulator verdict at the end.
@@ -30,7 +33,7 @@
 
 ## Current Result
 
-The new host is currently in no-GPU mode, so simulator launch, EGL camera replay,
+The new host was last recorded in no-GPU mode, so simulator launch, EGL camera replay,
 CUDA model loading and motion are intentionally not claimed. Static model checks
 confirm the 8D state, two-camera input, 7D action output and 50-step action chunk.
 
@@ -47,6 +50,21 @@ This is an execution-equivalence limitation, not a model-loading or plumbing
 failure. The next performance task is to expose or implement a native OSC action
 path before running the 135-episode matrix.
 
+## Local Handoff Check — 2026-11-04 (Asia/Shanghai)
+
+- Starting local `main` HEAD and live GitHub `main` both matched
+  `10a103adbd195692dc2922e5a0ee2622de482495`; working tree was clean before
+  this documentation update.
+- This session reran the platform-independent suite with Windows Python 3.13:
+  **18 tests passed**.
+- This session expanded `v1_smoke.toml` to **1 job** and `v1_eval.toml` to
+  **135 jobs**. No simulation episodes were run.
+- Inspected the locked RoboEnv, Kinex, LIBERO and LeRobot sources. The current
+  bridge and backend are not native OSC equivalent; see
+  [`NATIVE_OSC_AUDIT.md`](NATIVE_OSC_AUDIT.md).
+- No AutoDL connection, server inspection, GPU start, environment installation
+  or automation creation occurred in this session.
+
 ## Remaining
 
 - Implement native OSC-equivalent action execution.
@@ -62,4 +80,8 @@ path before running the 135-episode matrix.
 4. Load the pinned SmolVLA checkpoint on CUDA.
 5. `run_vla_subtask` completes one bounded action execution.
 6. `tableclear-01-smoke` produces one complete `episode_end` record.
+
+Steps 5–6 on the existing joint bridge are plumbing checks only. Native OSC
+action/observation parity must be accepted separately before any benchmark
+interpretation; a completed episode record is not a successful task.
 

@@ -3,7 +3,10 @@
 The no-GPU instance is suitable only for source and CPU dependency preparation.
 Before the first simulator launch:
 
-1. Switch the same AutoDL data disk to an RTX 4090D 24GB instance.
+1. Wait for the user to manually start a GPU instance using the prepared data
+   disk. The latest reported package was RTX 4090 24GB; verify the actual device
+   rather than assuming the earlier 4090D configuration. Do not rent/start an
+   instance or restore the cancelled GPU monitor automatically.
 2. Verify the GPU:
 
    ```bash
@@ -40,6 +43,12 @@ Before the first simulator launch:
    /root/.local/bin/kinex -p "/load all"
    /root/.local/bin/kinex -p "/ping all"
    ```
+
+These checks establish device connectivity only. Before treating an episode as
+an OSC baseline, complete the native action and observation parity gates in
+[`NATIVE_OSC_AUDIT.md`](NATIVE_OSC_AUDIT.md). The existing `run_vla_subtask`
+still uses IK and absolute joint targets. Do not start the 135-episode matrix
+until action parity, the high-level provider and one full smoke episode pass.
 
 The SSH host or port may change after starting a GPU instance. Update the local
 SSH config accordingly. The dedicated public key may need to be installed again

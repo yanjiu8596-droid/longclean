@@ -40,19 +40,25 @@ The model device must be persistent. Each inference receives:
 - the live action schema.
 
 It returns an action chunk. Kinex `max_actions` applies the execution horizon.
-The integration target is:
+The model action contract is:
 
 ```text
 6D end-effector delta + 1D gripper
 ```
 
-The dimensions and ordering must be checked against `describe()` from the
-running RoboEnv task. Kinex should send the chunk with `space="pose_delta"` and
-use the local joint driver for IK.
+The dimensions and ordering must be checked against the native controller and
+the running RoboEnv task. The existing bridge sends `space="pose_delta"` and
+uses IK followed by absolute joint writes. This is the historical integration
+path, not a native OSC-equivalent executor. See
+[`NATIVE_OSC_AUDIT.md`](NATIVE_OSC_AUDIT.md) before changing or evaluating it.
 
-LIBERO emits normalized OSC actions. The project maps translation with scale
-`0.05 m` and rotation with scale `0.5 rad`, matching RoboSuite's `OSC_POSE`
-controller, and clips the gripper command to `[-1, 1]`.
+The existing bridge applies translation scale `0.05 m`, rotation scale
+`0.5 rad`, and clips the gripper command to `[-1, 1]`. These constants do not
+make IK/joint-position execution equivalent to OSC. A native path must pass the
+postprocessed 7D policy action to LIBERO's `OSC_POSE` controller without this
+external physical-unit scaling or IK, and preserve native stepping semantics.
+The current tool/script default is 30 Hz while the pinned RoboEnv backend uses
+20 Hz; scheduling and executed frame counts still need to be aligned.
 
 ## `run_vla_subtask`
 
@@ -78,7 +84,7 @@ Output:
 }
 ```
 
-The tool must:
+The existing tool is intended to:
 
 1. read fresh observations;
 2. call the SmolVLA model device;
@@ -87,6 +93,9 @@ The tool must:
 5. wait on the simulator clock;
 6. read fresh feedback;
 7. return images and structured execution evidence.
+
+This interface's `completed` status means execution completed, not task success.
+The native OSC replacement has not been implemented or accepted.
 
 ## Acceptance commands
 

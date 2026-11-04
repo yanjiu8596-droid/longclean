@@ -4,8 +4,8 @@ Fixed-arm tabletop cleaning in LIBERO, with SmolVLA as the low-level action exec
 
 ## Current status
 
-This repository currently implements the V1 foundation and a validated direct
-SmolVLA LIBERO path:
+This repository currently implements the V1 foundation and a direct SmolVLA
+LIBERO integration whose previous GPU smoke executed motion but failed the task:
 
 - object inventory and cleanup state machine;
 - next-object subtask selection;
@@ -21,16 +21,22 @@ SmolVLA LIBERO path:
 - a one-action device smoke and a deterministic direct-VLA episode runner;
 - Kinex `table-clear` skill template.
 
-The current AutoDL host has completed the no-GPU preparation: TableClear,
+Historical records show that the new AutoDL host completed software provisioning: TableClear,
 Kinex, RoboEnv, LIBERO dependencies/assets, the exported device workspace,
 SmolVLA's model environment and both pinned model artifacts are ready. A GPU is
-still required to launch LIBERO and load the policy on CUDA.
+still required for the project's EGL/CUDA acceptance. The server's current state
+has not been rechecked. Native OSC integration and high-level provider setup
+remain unfinished and can be developed without a GPU.
 
 On the previous GPU host, the direct path executed real LIBERO motion and sealed
 a native simulator verdict. The current Kinex arm path uses absolute joint-position
 execution rather than LIBERO's native OSC controller, so benchmark performance
 is not yet validated. The first 600-action direct-VLA smoke completed
 operationally but did not solve `libero-10-01`.
+
+The pinned-source action-protocol audit and next acceptance gates are in
+[`docs/NATIVE_OSC_AUDIT.md`](docs/NATIVE_OSC_AUDIT.md). Local unit tests do not
+establish controller equivalence or task success.
 
 ## V1 task
 
@@ -106,9 +112,9 @@ Do not install Kinex, MuJoCo or LIBERO into the Windows Python environment.
 
 ## AutoDL checks
 
-The Codex heartbeat named `AutoDL 宿主 GPU 空闲监控` checks the AutoDL console
-for the current host's `gpu_idle_num / gpu_number`. It reports only when free
-capacity appears and never starts or rents an instance.
+The GPU-monitor automation was cancelled at the user's request. Do not recreate
+it or automatically rent/start an instance. The script below is a manual check;
+it does not query marketplace availability or start an instance.
 
 After manually starting the instance, check whether it is online and ready for
 CUDA work:
