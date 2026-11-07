@@ -7,7 +7,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from native_method_schedule import MethodSchedule, accepted_visual_provider
-from native_temporal_vision import release_steps
+from native_temporal_vision import TemporalVision, release_steps
 from native_visual import VisualPlanner
 from run_native_methods import jobs_for
 from tableclear.state import TaskState
@@ -17,6 +17,15 @@ class NativeMethodScheduleTests(unittest.TestCase):
     def test_release_detection_requires_sustained_close_and_open(self):
         commands = [-1, -1, 1, -1, 1, 1, 1, -1, -1, 1, -1, -1, -1, -1, 1, 1, 1, -1, -1, -1]
         self.assertEqual(release_steps(commands), [11, 18])
+
+    def test_release_window_waits_for_observed_opening(self):
+        history = TemporalVision()
+        history.observe(0, [], [], [], [0.04, -0.04])
+        history.observe(10, [], [1] * 10, [], [0.021, -0.021])
+        history.observe(20, [], [1] * 4 + [-1] * 6, [], [0.023, -0.024])
+        self.assertEqual(list(history.release_windows()), [])
+        history.observe(30, [], [-1] * 10, [], [0.039, -0.039])
+        self.assertEqual([(command, before.step, after.step) for command, before, after in history.release_windows()], [(15, 10, 30)])
 
     def schedule(self, method):
         return MethodSchedule(method, TaskState.from_labels("scene", ["can", "box"]), 520, 10)

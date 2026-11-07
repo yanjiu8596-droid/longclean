@@ -31,11 +31,13 @@ def trajectory(path: Path, expected_init: str, decision_step: int | None = None)
     with np.load(sample_path, allow_pickle=False) as samples:
         commands = samples["gripper_commands"].tolist()
         last = 0
-        for step, views, hashes in zip(samples["steps"], samples["images"], samples["image_hashes"], strict=True):
+        for step, views, hashes, qpos in zip(
+            samples["steps"], samples["images"], samples["image_hashes"], samples["gripper_qpos"], strict=True,
+        ):
             step = int(step)
             if decision_step is not None and step > decision_step:
                 break
-            history.observe(step, [Image.fromarray(view) for view in views], commands[last:step], hashes.tolist())
+            history.observe(step, [Image.fromarray(view) for view in views], commands[last:step], hashes.tolist(), qpos)
             last = step
     if decision_step is not None and last != decision_step:
         raise ValueError(f"decision frame {decision_step} was not sampled in {path}")

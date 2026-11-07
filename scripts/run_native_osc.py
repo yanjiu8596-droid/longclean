@@ -261,6 +261,7 @@ def episode(args: argparse.Namespace) -> dict:
         history.observe(
             record["steps"], planner.image_views(observation), commands,
             [simulator["observation_sha256"][name] for name in CAMERAS],
+            observation["observation.state"][0, -2:].tolist(),
         )
 
     def inspect_target(observation, target_id):

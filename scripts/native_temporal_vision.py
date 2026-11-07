@@ -16,6 +16,7 @@ class Frame:
     step: int
     images: list
     hashes: list[str]
+    gripper_width: float
 
 
 def release_steps(commands: list[float]) -> list[int]:
@@ -61,17 +62,22 @@ class TemporalVision:
         self.events = {}
         self.identities = {}
 
-    def observe(self, step: int, images: list, commands: list[float], hashes: list[str]) -> None:
+    def observe(self, step: int, images: list, commands: list[float], hashes: list[str], gripper_qpos) -> None:
         if step != len(self.commands) + len(commands) or self.frames and step <= self.frames[-1].step:
             raise ValueError("temporal observations must have contiguous native actions")
         self.commands.extend(commands)
-        self.frames.append(Frame(step, images, hashes))
+        left, right = gripper_qpos
+        self.frames.append(Frame(step, images, hashes, abs(float(left) - float(right))))
 
     def release_windows(self):
+        open_width = 0.8 * self.frames[0].gripper_width
         for released in release_steps(self.commands):
             before = next((frame for frame in reversed(self.frames) if frame.step < released), None)
-            after = next((frame for frame in self.frames if frame.step >= released + 3), None)
-            if before is not None and after is not None and after.step - released <= 16:
+            after = next((
+                frame for frame in self.frames
+                if released + 3 <= frame.step <= released + 26 and frame.gripper_width >= open_width
+            ), None)
+            if before is not None and after is not None:
                 yield released, before, after
 
     def static_at(self, planner, frame, target_id, label):
@@ -108,6 +114,7 @@ class TemporalVision:
             "release_step": released, "before": before.step, "after": after.step, "raw": raw,
             "status": status.value, "parsed": token in STATUSES, "basket_margin": margin,
             "image_sha256": [before.hashes, after.hashes],
+            "measured_gripper_width": [before.gripper_width, after.gripper_width],
         }
         self.events[key] = result
         return result, 1
