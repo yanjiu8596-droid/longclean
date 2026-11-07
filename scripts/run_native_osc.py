@@ -255,9 +255,12 @@ def episode(args: argparse.Namespace) -> dict:
 
                         state = TaskState.from_labels(record["task_id"], labels)
                         if args.method == "closed_loop_vla":
-                            path, strategy, pin = accepted_visual_provider(args.visual_validation, PROJECT, args.workspace)
-                            planner = VisualPlanner(path, record["task_id"], labels, fixed=False, strategy=strategy)
-                            record["vision"] = {**pin, "strategy": strategy}
+                            path, provider = accepted_visual_provider(args.visual_validation, PROJECT, args.workspace)
+                            planner = VisualPlanner(
+                                path, record["task_id"], labels, fixed=False, strategy=provider["strategy"],
+                                min_basket_margin=provider["min_basket_margin"],
+                            )
+                            record["vision"] = provider
                             record_visual(planner.inventory(obs), initial, "inventory")
                             state = planner.controller.state
                         schedule = MethodSchedule(args.method, state, args.steps, args.chunk_steps)

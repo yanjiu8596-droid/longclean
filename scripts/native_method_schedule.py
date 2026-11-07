@@ -65,7 +65,7 @@ class MethodSchedule:
             target.status = ObjectStatus.PENDING
 
 
-def accepted_visual_provider(report_path: Path, project: Path, workspace: Path) -> tuple[Path, str, dict]:
+def accepted_visual_provider(report_path: Path, project: Path, workspace: Path) -> tuple[Path, dict]:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     if report.get("status") != "passed" or report.get("gate_passed") is not True:
         raise ValueError("closed-loop evaluation requires a passed held-out visual validation")
@@ -79,4 +79,4 @@ def accepted_visual_provider(report_path: Path, project: Path, workspace: Path) 
     revision_file = path / "model-revision.txt"
     if revision_file.is_file() and revision_file.read_text(encoding="utf-8").strip() != pin["revision"]:
         raise ValueError("installed vision provider does not match the locked revision")
-    return path, provider["strategy"], provider["model"]
+    return path, {**provider["model"], "strategy": provider["strategy"], "min_basket_margin": provider.get("min_basket_margin")}

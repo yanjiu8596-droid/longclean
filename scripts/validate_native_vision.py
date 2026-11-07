@@ -41,7 +41,6 @@ def evaluate(planner, cases: dict, strategy: str) -> tuple[dict, list]:
     from PIL import Image
 
     planner.strategy = strategy
-    totals = Counter(cases=0, correct=0, abstain=0, false_positive=0, false_negative=0, unparsed=0)
     evidence = []
     for (scene, label, expected), samples in sorted(cases.items()):
         for row, folder in samples.values():
@@ -52,21 +51,36 @@ def evaluate(planner, cases: dict, strategy: str) -> tuple[dict, list]:
                     images.append(source.convert("RGB"))
             answer = planner.inspect_images(images, "probe_target", label)
             prediction = None if answer["status"] == "unknown" else answer["status"] == "in_basket"
-            totals["cases"] += 1
-            totals["unparsed"] += not answer["parsed"]
-            if prediction is None:
-                totals["abstain"] += 1
-            elif prediction == expected:
-                totals["correct"] += 1
-            else:
-                totals["false_positive" if prediction else "false_negative"] += 1
             evidence.append({
                 "scene": scene, "target": label, "run": row["run"], "artifact": folder.name,
                 "seed": row["seed"], "init": row["init"], "init_state_sha256": row["init_state_sha256"],
                 "image_sha256": [sha256(path.read_bytes()).hexdigest() for path in paths],
                 "answer": answer, "expected_in_basket": expected, "predicted_in_basket": prediction,
             })
-    return dict(totals), evidence
+    return summarize(evidence), evidence
+
+
+def summarize(records: list) -> dict:
+    totals = Counter(cases=0, correct=0, abstain=0, false_positive=0, false_negative=0, unparsed=0)
+    for row in records:
+        prediction, expected = row["predicted_in_basket"], row["expected_in_basket"]
+        totals["cases"] += 1
+        totals["unparsed"] += not row["answer"]["parsed"]
+        if prediction is None:
+            totals["abstain"] += 1
+        elif prediction == expected:
+            totals["correct"] += 1
+        else:
+            totals["false_positive" if prediction else "false_negative"] += 1
+    return dict(totals)
+
+
+def filter_margin(records: list, margin: float) -> list:
+    return [
+        {**r, "predicted_in_basket": None, "answer": {**r["answer"], "status": "unknown"}}
+        if r["predicted_in_basket"] is True and r["answer"]["basket_margin"] < margin else r
+        for r in records
+    ]
 
 
 def qualified(score: dict, *, holdout: bool) -> bool:
@@ -98,7 +112,13 @@ def run(args) -> None:
         "project_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True).strip(),
         "calibration": {}, "gate_passed": False,
     }
-    if args.wrist:
+    if args.qwen3 is not None:
+        models = [("qwen3_vl_4b_instruct", args.qwen3, ("basket_zoom", "basket_wrist", "basket_guard"))]
+        if args.qwen is not None:
+            models.insert(0, ("qwen2_5_vl_3b_instruct", args.qwen, ("basket_zoom",)))
+    elif args.confidence:
+        models = [("qwen2_5_vl_3b_instruct", args.qwen, ("basket_zoom",))]
+    elif args.wrist:
         models = [("qwen2_5_vl_3b_instruct", args.qwen, ("basket_wrist", "basket_guard"))]
     elif args.grounded:
         models = [("qwen2_5_vl_3b_instruct", args.qwen, ("appearance", "basket_zoom"))]
@@ -118,13 +138,20 @@ def run(args) -> None:
         pin = model_pin(path, model_id)
         planner = VisualPlanner(path, "vision-validation", ["probe target"], fixed=False)
         for strategy in strategies:
-            key = f"{model_id}/{strategy}"
+            scored = args.confidence or (args.qwen3 is not None and strategy == "basket_zoom")
+            planner.min_basket_margin = 0.0 if scored else None
             score, records = evaluate(planner, calibration, strategy)
-            report["calibration"][key] = {"model": pin, "strategy": strategy, "score": score, "records": records}
-            print(json.dumps({"split": "calibration", "candidate": key, "score": score}), flush=True)
+            for margin in (0, 0.5, 1, 2, 3, 4, 5) if scored else (None,):
+                key = f"{model_id}/{strategy}" + (f"@margin={margin}" if margin is not None else "")
+                adjusted = records if margin is None else filter_margin(records, margin)
+                score = summarize(adjusted)
+                report["calibration"][key] = {
+                    "model": pin, "strategy": strategy, "min_basket_margin": margin, "score": score, "records": adjusted,
+                }
+                print(json.dumps({"split": "calibration", "candidate": key, "score": score}), flush=True)
+                if qualified(score, holdout=False):
+                    candidates[key] = (score["correct"], model_id, path, strategy, margin)
             save()
-            if qualified(score, holdout=False):
-                candidates[key] = (score["correct"], model_id, path, strategy)
         del planner
         torch.cuda.empty_cache()
     if not candidates:
@@ -132,13 +159,15 @@ def run(args) -> None:
         save()
         return
     winner = max(candidates, key=lambda key: candidates[key][0])
-    _, model_id, path, strategy = candidates[winner]
+    _, model_id, path, strategy, margin = candidates[winner]
     report.update(status="validating_holdout", selected=winner)
     save()
     holdout = panel(args.run, scenes, range(25, 50), 4)
-    planner = VisualPlanner(path, "vision-validation", ["probe target"], fixed=False)
+    planner = VisualPlanner(path, "vision-validation", ["probe target"], fixed=False, min_basket_margin=margin)
     score, records = evaluate(planner, holdout, strategy)
-    report["holdout"] = {"model": model_pin(path, model_id), "strategy": strategy, "score": score, "records": records}
+    report["holdout"] = {
+        "model": model_pin(path, model_id), "strategy": strategy, "min_basket_margin": margin, "score": score, "records": records,
+    }
     report["gate_passed"] = qualified(score, holdout=True)
     report["status"] = "passed" if report["gate_passed"] else "holdout_failed"
     print(json.dumps({"split": "holdout", "candidate": winner, "score": score, "passed": report["gate_passed"]}), flush=True)
@@ -152,7 +181,9 @@ if __name__ == "__main__":
     strategies = parser.add_mutually_exclusive_group()
     strategies.add_argument("--grounded", action="store_true")
     strategies.add_argument("--wrist", action="store_true")
+    strategies.add_argument("--confidence", action="store_true")
+    strategies.add_argument("--qwen3", type=Path)
     args = parser.parse_args()
-    if (args.grounded or args.wrist) and args.qwen is None:
-        parser.error("--grounded and --wrist require --qwen")
+    if (args.grounded or args.wrist or args.confidence) and args.qwen is None:
+        parser.error("this validation mode requires --qwen")
     run(args)

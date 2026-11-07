@@ -32,7 +32,7 @@ OBJECT_APPEARANCE = {
 class VisualPlanner:
     def __init__(
         self, model_path: Path, task_id: str, labels: list[str], *,
-        fixed: bool, strategy: str = "original",
+        fixed: bool, strategy: str = "original", min_basket_margin: float | None = None,
     ) -> None:
         import torch
         from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -44,6 +44,7 @@ class VisualPlanner:
         ).to("cuda").eval()
         self.fixed = fixed
         self.strategy = strategy
+        self.min_basket_margin = min_basket_margin
         self.controller = CleanupController(
             TaskState.from_labels(task_id, labels), max_attempts=1 if fixed else 3, max_actions=10,
         )
@@ -115,20 +116,39 @@ class VisualPlanner:
                 "Answer UNKNOWN if you cannot locate the named object. Reply with one word."
             )
             statuses = LOCATION_WORDS
-        text = self.answer(images, question)
+        text, margin = self.generate(images, question, score_digits=self.min_basket_margin is not None)
         token = text.strip(". \n\t").lower()
         status = statuses.get(token, VerdictStatus.UNKNOWN)
-        return {"target_id": target_id, "target": label, "status": status.value, "raw": text, "parsed": token in statuses}
+        result = {"target_id": target_id, "target": label, "status": status.value, "raw": text, "parsed": token in statuses}
+        if margin is not None:
+            result["basket_margin"] = margin
+            if status == VerdictStatus.IN_BASKET and margin < self.min_basket_margin:
+                result["status"] = VerdictStatus.UNKNOWN.value
+        return result
 
     def answer(self, images: list, question: str) -> str:
+        return self.generate(images, question, score_digits=False)[0]
+
+    def generate(self, images: list, question: str, *, score_digits: bool) -> tuple[str, float | None]:
         messages = [{"role": "user", "content": [
             *({"type": "image"} for _ in images), {"type": "text", "text": question},
         ]}]
         prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
         batch = self.processor(text=prompt, images=images, return_tensors="pt").to("cuda", dtype=self.torch.bfloat16)
         with self.torch.inference_mode():
-            result = self.model.generate(**batch, max_new_tokens=12, do_sample=False)
-        return self.processor.decode(result[0, batch["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+            result = self.model.generate(
+                **batch, max_new_tokens=12, do_sample=False,
+                return_dict_in_generate=score_digits, output_scores=score_digits,
+            )
+        sequences = result.sequences if score_digits else result
+        text = self.processor.decode(sequences[0, batch["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+        if not score_digits:
+            return text, None
+        token_ids = [self.processor.tokenizer.encode(digit, add_special_tokens=False) for digit in STATUSES]
+        if any(len(ids) != 1 for ids in token_ids):
+            raise ValueError("digit confidence requires four individual answer tokens")
+        scores = result.scores[0][0, [ids[0] for ids in token_ids]].float()
+        return text, (scores[0] - scores[1:].max()).item()
 
     def inventory(self, observation: dict) -> list[dict]:
         results = []
