@@ -3,14 +3,16 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from native_method_schedule import MethodSchedule, accepted_visual_provider
 from native_temporal_vision import TemporalVision, release_steps
-from native_rgbd_placement import has_deposit
+from native_rgbd_placement import RGBD_RELEASE, has_deposit
 from native_visual import VisualPlanner
 from run_native_methods import jobs_for
+from run_native_osc import ReleaseSampling
 from tableclear.state import TaskState
 
 
@@ -41,6 +43,33 @@ class NativeMethodScheduleTests(unittest.TestCase):
         self.assertEqual(list(history.release_windows(rgbd=True)), [])
         history.observe(30, [], [-1] * 10, [], [0.0265, -0.0265])
         self.assertEqual([(before.step, after.step) for _, before, after in history.release_windows(rgbd=True)], [(10, 30)])
+
+    def test_dense_sampling_starts_on_first_open_and_has_a_bounded_window(self):
+        sampling = ReleaseSampling()
+        commands = [-1, 1, 1, -1, 1, 1, 1] + [-1] * 14 + [1, 1, 1, -1]
+        self.assertEqual([step for step, value in enumerate(commands, 1) if sampling.observe(value)],
+                         [*range(8, 20), 25])
+
+    def test_position_positive_without_release_leaves_target_active(self):
+        history = TemporalVision()
+        history.observe(0, [], [], [], [0.04, -0.04])
+        history.observe(10, [], [1] * 10, [], [0.02, -0.02])
+        history.observe(12, [], [-1, -1], [], [0.022, -0.022])
+        planner = Mock()
+        planner.inspect_consensus.return_value = {"status": "in_basket", "inferences": 1, "parsed": True}
+        with (patch("native_temporal_vision.basket_difference", return_value=0),
+              patch("native_temporal_vision.wall_still_visible", return_value=True),
+              patch("native_temporal_vision.entering_basket", return_value={"supported": True}),
+              patch.object(history, "current_hold", return_value=(None, 0)),
+              patch.object(history, "vote_grasp", return_value=({"label": "tomato sauce", "parsed": True}, 2))):
+            decision = history.inspect(planner, "object_1", "tomato sauce", RGBD_RELEASE)
+        self.assertTrue(decision["in_basket_region"])
+        self.assertFalse(decision["release_confirmed"])
+        self.assertIsNone(decision["confirmed_frame"])
+        schedule = self.schedule("closed_loop_vla")
+        schedule.action(0, "")
+        schedule.apply_visual(decision["status"], 12)
+        self.assertEqual(schedule.action(12, "")[0], "object_1")
 
     def schedule(self, method):
         return MethodSchedule(method, TaskState.from_labels("scene", ["can", "box"]), 520, 10)

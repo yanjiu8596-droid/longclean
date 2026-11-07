@@ -153,17 +153,18 @@ class TemporalVision:
         ), before)
 
     def vote_grasp(self, planner, released, before):
-        previous = max((step for step in release_steps(self.commands) if step < released), default=0)
-        # Stay within one continuous close command and space votes across the transport.
-        closed_at = next((i for i in range(before.step - 1, previous - 1, -1)
-                          if self.commands[i] <= -0.5), previous - 1) + 1
+        previous = max((opened.step for step, _, opened in self.release_windows(rgbd=True) if step < released), default=0)
+        # Brief open commands can leave the measured grip unchanged. Do not cross a measured release.
+        oldest = max(previous, before.step - 55)
         full_width = self.frames[0].gripper_width
         views = []
         for frame in reversed(self.frames):
-            if not closed_at < frame.step <= before.step or views and views[-1].step - frame.step < 5:
+            if not oldest < frame.step <= before.step or views and views[-1].step - frame.step < 5:
                 continue
             if (0.018 < frame.gripper_width < 0.94 * full_width
-                    and frame.geometry["eef"][1] < 0.17 and frame.geometry["eef"][2] > 0.51):
+                    and abs(frame.gripper_width - before.gripper_width) < 0.007
+                    and self.commands[frame.step - 1] >= 0.5
+                    and frame.geometry["eef"][1] < 0.195 and frame.geometry["eef"][2] > 0.50):
                 views.append(frame)
             if len(views) == 3:
                 break
@@ -354,7 +355,7 @@ class TemporalVision:
                     if depth["confirmed"] is not None:
                         accepted = depth["confirmed"]
                         break
-                    if strategy in ("rgbd_placement", RGBD_RELEASE) or depth["held_identity"] is not None:
+                    if strategy == "rgbd_placement" or depth["held_identity"] is not None:
                         continue
                 visible_lining = lining_fraction(after)
                 if visible_lining < 0.03:
@@ -369,7 +370,10 @@ class TemporalVision:
                 delta = basket_difference(after, current)
                 evidence.append({**event, "wall_difference_to_current": delta, "wrist_lining_fraction": visible_lining})
                 if event["status"] == "in_basket" and delta < 25:
-                    identity, count = self.identify_at(planner, released, before, after, strategy)
+                    if release_aware:
+                        identity, count = self.vote_grasp(planner, released, before)
+                    else:
+                        identity, count = self.identify_at(planner, released, before, after, strategy)
                     calls += count
                     evidence[-1]["identity"] = identity
                     if identity["parsed"] and identity["label"] == label:

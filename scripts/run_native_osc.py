@@ -144,7 +144,12 @@ def simulate(
             frames += 1
             encode_frame(obs)
             success = bool(env.check_success())
-            dense = sampling is not None and sampling.observe(action[-1])
+            dense = False
+            if sampling is not None:
+                dense = sampling.observe(action[-1]) or (
+                    sampling.closed >= 3 and frames % 10 == 5
+                    and obs["robot0_eef_pos"][1] < 0.195 and obs["robot0_eef_pos"][2] > 0.50
+                )
             if success or done:
                 break
             if dense and executed < len(actions):
