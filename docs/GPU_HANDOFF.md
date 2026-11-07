@@ -55,3 +55,31 @@ SSH config accordingly. The dedicated public key may need to be installed again
 if AutoDL recreates the system disk; files under `/root/autodl-tmp` should remain
 on the data disk.
 
+## Standalone native OSC reference
+
+Run this from the project checkout on the prepared GPU host. The model Python
+loads the pinned SmolVLA weights offline. The separate LIBERO Python owns the
+official simulator, its native 7D relative OSC controller and its verdict.
+
+```bash
+cd /root/autodl-tmp/longclean
+source scripts/setup_cache.sh
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYOPENGL_PLATFORM=egl
+workspace=/root/autodl-tmp/tableclear-workspace
+out="${workspace}/results/native-osc-01-$(date -u +%Y%m%dT%H%M%SZ)"
+"${workspace}/.kinex/model-python/bin/python" -u scripts/run_native_osc.py \
+  --workspace "${workspace}" \
+  --roboenv /root/autodl-tmp/roboenv \
+  --sim-python /root/venvs/libero-cpu2/bin/python \
+  --output "${out}"
+```
+
+The default run uses seed 0, init-state index 0 and a 520-action budget.
+Check `episode.json` for the terminal reason and LIBERO verdict and
+`actions.jsonl` for the actions actually stepped. This is the direct-VLA
+reference for the planned Kinex parity test.
+
+For detached RoboEnv plumbing checks launched with a custom `--run-dir`,
+pass the resulting run directory's `run.json` to `roboenv stop` to use the
+owner socket and retain the terminal evidence.
+
