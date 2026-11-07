@@ -200,15 +200,18 @@ def episode(args: argparse.Namespace) -> dict:
     visual_provider = None
     visual_path = None
     supplemental_camera = None
-    if args.fair_methods and args.visual_validation is not None:
+    scheduled_methods = args.fair_methods or args.vision_runtime_probe
+    if scheduled_methods and args.visual_validation is not None:
         sys.path.insert(0, str(PROJECT / "src"))
         from native_method_schedule import accepted_visual_provider
 
-        visual_path, visual_provider = accepted_visual_provider(args.visual_validation, PROJECT, args.workspace)
+        visual_path, visual_provider = accepted_visual_provider(
+            args.visual_validation, PROJECT, args.workspace, runtime_probe=args.vision_runtime_probe,
+        )
         supplemental_camera = visual_provider["supplemental_camera"]
         if supplemental_camera:
             worker_command.extend(("--extra-view", supplemental_camera))
-    if args.fair_methods:
+    if scheduled_methods:
         record["supplemental_camera"] = supplemental_camera
 
     def read_observation(instruction, image_label=None):
@@ -271,7 +274,7 @@ def episode(args: argparse.Namespace) -> dict:
                 record["model"] = config["intrinsics"]["variant"]
                 planner = None
                 schedule = None
-                if args.fair_methods or args.method != "direct_vla":
+                if scheduled_methods or args.method != "direct_vla":
                     import tomllib
 
                     sys.path.insert(0, str(PROJECT / "src"))
@@ -280,7 +283,7 @@ def episode(args: argparse.Namespace) -> dict:
                     with (PROJECT / "configs" / "v1_eval.toml").open("rb") as settings:
                         scenes = tomllib.load(settings)["scenes"]
                     labels = next(scene["objects"] for scene in scenes if scene["source_task"] == record["task_id"])
-                    if args.fair_methods:
+                    if scheduled_methods:
                         from native_method_schedule import MethodSchedule
                         from tableclear.state import TaskState
 
@@ -299,7 +302,9 @@ def episode(args: argparse.Namespace) -> dict:
                             state = planner.controller.state
                         schedule = MethodSchedule(args.method, state, args.steps, args.chunk_steps)
                         record["chunk_horizon"] = args.chunk_steps
-                        record["method_protocol"] = "shared-action-budget-v1"
+                        record["method_protocol"] = (
+                            "vision-runtime-probe-v1" if args.vision_runtime_probe else "shared-action-budget-v1"
+                        )
                     else:
                         base = next(a for a in record["model_artifacts"] if a["name"] == "smolvlm2_500m_video_instruct")
                         planner = VisualPlanner(
@@ -400,7 +405,9 @@ def main() -> None:
     parser.add_argument("--scene", type=int, choices=(1, 2, 8), default=1)
     parser.add_argument("--chunk-steps", type=int, choices=range(1, 51), metavar="1..50")
     parser.add_argument("--method", choices=("direct_vla", "fixed_checklist_vla", "closed_loop_vla"), default="direct_vla")
-    parser.add_argument("--fair-methods", action="store_true")
+    protocol = parser.add_mutually_exclusive_group()
+    protocol.add_argument("--fair-methods", action="store_true")
+    protocol.add_argument("--vision-runtime-probe", action="store_true")
     parser.add_argument("--visual-validation", type=Path)
     parser.add_argument("--sim-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--socket", type=Path, help=argparse.SUPPRESS)
@@ -424,6 +431,11 @@ def main() -> None:
         parser.error("the paired method protocol uses 10-step chunks and 520 available actions")
     if args.fair_methods and args.method == "closed_loop_vla" and args.visual_validation is None:
         parser.error("--visual-validation is required for the paired closed-loop method")
+    if args.vision_runtime_probe and (
+        args.method != "closed_loop_vla" or args.visual_validation is None
+        or args.chunk_steps != 10 or args.steps > 20 or args.init_index < 15
+    ):
+        parser.error("the vision runtime probe requires a diagnostic initial state, a visual report, and at most 20 steps")
     print(json.dumps(episode(args), indent=2))
 
 

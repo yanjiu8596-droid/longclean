@@ -1,10 +1,12 @@
 from pathlib import Path
+import json
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from native_method_schedule import MethodSchedule
+from native_method_schedule import MethodSchedule, accepted_visual_provider
 from run_native_methods import jobs_for
 from tableclear.state import TaskState
 
@@ -46,3 +48,24 @@ class NativeMethodScheduleTests(unittest.TestCase):
         self.assertEqual(len({job[:3] for job in formal}), 45)
         self.assertEqual({job[2] for job in formal}, set(range(15)))
         self.assertTrue(all(job[2] >= 15 for job in jobs_for("pilot")))
+
+    def test_failed_visual_gate_can_only_be_used_in_a_runtime_probe(self):
+        project = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            report = root / "validation.json"
+            report.write_text(json.dumps({
+                "status": "holdout_failed", "gate_passed": False,
+                "selected": "qwen3_vl_4b_instruct/basket_zoom",
+                "holdout": {
+                    "strategy": "basket_zoom",
+                    "model": {
+                        "repository": "Qwen/Qwen3-VL-4B-Instruct",
+                        "revision": "ebb281ec70b05090aa6165b016eac8ec08e71b17",
+                    },
+                },
+            }), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                accepted_visual_provider(report, project, root)
+            _, provider = accepted_visual_provider(report, project, root, runtime_probe=True)
+            self.assertEqual(provider["strategy"], "basket_zoom")

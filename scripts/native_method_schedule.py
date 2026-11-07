@@ -65,9 +65,12 @@ class MethodSchedule:
             target.status = ObjectStatus.PENDING
 
 
-def accepted_visual_provider(report_path: Path, project: Path, workspace: Path) -> tuple[Path, dict]:
+def accepted_visual_provider(
+    report_path: Path, project: Path, workspace: Path, *, runtime_probe: bool = False,
+) -> tuple[Path, dict]:
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    if report.get("status") != "passed" or report.get("gate_passed") is not True:
+    passed = report.get("status") == "passed" and report.get("gate_passed") is True
+    if not passed and not (runtime_probe and report.get("status") == "holdout_failed"):
         raise ValueError("closed-loop evaluation requires a passed held-out visual validation")
     model_id = report["selected"].split("/", 1)[0]
     with (project / "versions.lock").open("rb") as handle:
