@@ -19,7 +19,8 @@ DEVELOPMENT = range(19, 40)
 HOLDOUT = range(40, 50)
 
 
-def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd: bool = False, release_tail: bool = False) -> None:
+def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd: bool = False,
+           release_tail: bool = False, dense_release: bool = False) -> None:
     import numpy as np
 
     episode = json.loads((source / "episode.json").read_bytes())
@@ -36,6 +37,8 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
         command.append("--rgbd")
     if release_tail:
         command.append("--release-tail")
+    if dense_release:
+        command.append("--dense-release")
     frame_path = output / "observation.npz"
     frames, images, gripper_qpos, gripper_commands, image_hashes = [], [], [], [], []
     depths, intrinsics, extrinsics, eef_positions = [], [], [], []
@@ -50,9 +53,9 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
             raise RuntimeError(f"simulator did not respond; see {output / 'simulator.log'}")
         return json.loads(line)
 
-    def sample(metadata, path=frame_path):
+    def sample(metadata, path=frame_path, at=None):
         with np.load(path, allow_pickle=False) as raw:
-            frames.append(step)
+            frames.append(step if at is None else at)
             images.append([raw[camera][::-1, ::-1].copy() for camera in CAMERAS])
             gripper_qpos.append(raw["gripper_qpos"])
             image_hashes.append([metadata["observation_sha256"][camera] for camera in CAMERAS])
@@ -85,6 +88,11 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
                         gripper_commands.extend(action[-1] for action in segment)
                         offset += count
                         step += count
+                        for observation in current.get("release_observations", []):
+                            at = observation["step"]
+                            path = output / f"release-{at}.npz"
+                            sample(observation, path, at)
+                            path.unlink()
                         if step % 10 == 0 or step == episode["steps"]:
                             sample(current)
                     verify(current, row, (*OBSERVATION_FIELDS, "success", "done", "audit_goals"))
@@ -115,6 +123,7 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
         "init_state_sha256": episode["init_state_sha256"], "bddl_sha256": episode["bddl_sha256"],
         "terminal_state_sha256": current["sim_state_sha256"], "official_success": episode["success"],
         "rgbd": rgbd,
+        **({"dense_release": True} if dense_release else {}),
         **({"diagnostic_tail": tail_records} if tail_records else {}),
         "actions_sha256": sha256((source / "actions.jsonl").read_bytes()).hexdigest(),
         "frames_sha256": sha256((output / "frames.npz").read_bytes()).hexdigest(),
@@ -122,7 +131,8 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
     print(json.dumps({"replayed": source.name, "sampled_frames": len(frames)}), flush=True)
 
 
-def replay_panel(cases, output: Path, sim_python: Path, roboenv: Path, workers: int, *, rgbd: bool = False) -> None:
+def replay_panel(cases, output: Path, sim_python: Path, roboenv: Path, workers: int, *, rgbd: bool = False,
+                 dense_release: bool = False) -> None:
     sources = {folder.name: folder for samples in cases.values() for _, folder in samples.values()}
     output.mkdir(parents=True, exist_ok=True)
 
@@ -130,13 +140,13 @@ def replay_panel(cases, output: Path, sim_python: Path, roboenv: Path, workers: 
         destination = output / folder.name
         if (destination / "verified.json").is_file():
             previous = json.loads((destination / "verified.json").read_bytes())
-            if bool(previous.get("rgbd")) != rgbd:
+            if bool(previous.get("rgbd")) != rgbd or bool(previous.get("dense_release")) != dense_release:
                 raise ValueError(f"replay observation mode differs: {destination}")
             return
         staging = destination.with_name(destination.name + ".partial")
         while staging.exists():
             staging = staging.with_suffix(staging.suffix + "-retry")
-        replay(folder, staging, sim_python, roboenv, rgbd=rgbd)
+        replay(folder, staging, sim_python, roboenv, rgbd=rgbd, dense_release=dense_release)
         staging.rename(destination)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -159,11 +169,16 @@ if __name__ == "__main__":
     parser.add_argument("--workers", type=int, choices=range(1, 11), default=8)
     parser.add_argument("--rgbd", action="store_true")
     parser.add_argument("--release-tail", action="store_true")
+    parser.add_argument("--dense-release", action="store_true")
     args = parser.parse_args()
     if args.release_tail and (args.episode_dir is None or not args.rgbd):
         parser.error("--release-tail requires --episode-dir and --rgbd")
+    if args.dense_release and not args.rgbd:
+        parser.error("--dense-release requires --rgbd")
     if args.episode_dir is not None:
-        replay(args.episode_dir, args.output, args.sim_python, args.roboenv, rgbd=args.rgbd, release_tail=args.release_tail)
+        replay(args.episode_dir, args.output, args.sim_python, args.roboenv, rgbd=args.rgbd,
+               release_tail=args.release_tail, dense_release=args.dense_release)
     else:
         calibration = panel(args.run, scene_labels(), DEVELOPMENT, 2)
-        replay_panel(calibration, args.output, args.sim_python, args.roboenv, args.workers, rgbd=args.rgbd)
+        replay_panel(calibration, args.output, args.sim_python, args.roboenv, args.workers, rgbd=args.rgbd,
+                     dense_release=args.dense_release)

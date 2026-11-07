@@ -18,6 +18,41 @@ CAMERAS = {"camera1": "agentview_image", "camera2": "robot0_eye_in_hand_image"}
 EXTRA_VIEWS = ("birdview", "frontview", "sideview", "galleryview", "paperview", "robot0_robotview")
 
 
+class ReleaseSampling:
+    """Sample the first 12 opening actions after a sustained close command."""
+
+    def __init__(self):
+        self.closed = 0
+        self.opening = 0
+
+    def observe(self, command):
+        if command >= 0.5:
+            self.closed += 1
+            self.opening = 0
+        elif command <= -0.5 and (self.closed >= 3 or self.opening):
+            self.closed = 0
+            self.opening += 1
+            return self.opening <= 12
+        else:
+            self.closed = self.opening = 0
+        return False
+
+
+def read_rgbd_frame(path):
+    import numpy as np
+    from PIL import Image
+
+    with np.load(path, allow_pickle=False) as raw:
+        images = [Image.fromarray(raw[name][::-1, ::-1].copy()) for name in CAMERAS]
+        geometry = {
+            "depths": [raw[f"{name}_depth"][::-1, ::-1].copy() for name in CAMERAS],
+            "intrinsics": [raw[f"{name}_intrinsic"] for name in CAMERAS],
+            "extrinsics": [raw[f"{name}_extrinsic"] for name in CAMERAS],
+            "eef": raw["eef_pos"],
+        }
+        return images, raw["gripper_qpos"], geometry
+
+
 def validate_actions(actions: object) -> None:
     if not isinstance(actions, list) or not 1 <= len(actions) <= 50 or any(
         not isinstance(action, list) or len(action) != 7
@@ -31,7 +66,7 @@ def simulate(
     output: Path, roboenv: Path, seed: int, init_index: int,
     socket_path: Path | None, steps: int, scene: int, video_path: Path | None = None,
     extra_views: tuple[str, ...] = (), extra_view_frame: int | None = None, rgbd: bool = False,
-    release_tail: bool = False,
+    release_tail: bool = False, dense_release: bool = False,
 ) -> None:
     # Keep the response pipe separate from native library diagnostics.
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
@@ -56,6 +91,7 @@ def simulate(
         raise ValueError(f"init index must be between 0 and {len(states) - 1}")
     encoder = None
     frames = 0
+    sampling = ReleaseSampling() if dense_release else None
 
     def encode_frame(obs):
         if encoder is not None:
@@ -102,14 +138,21 @@ def simulate(
 
     def advance(actions):
         nonlocal frames
+        observations = []
         for executed, action in enumerate(actions, start=1):
             obs, _, done, _ = env.step(np.asarray(action, dtype=np.float32))
             frames += 1
             encode_frame(obs)
             success = bool(env.check_success())
+            dense = sampling is not None and sampling.observe(action[-1])
             if success or done:
                 break
-        return capture(obs, executed=executed, success=success, done=bool(done))
+            if dense and executed < len(actions):
+                observations.append(capture(obs, destination=output / f"release-{frames}.npz", step=frames))
+        result = capture(obs, executed=executed, success=success, done=bool(done))
+        if observations:
+            result["release_observations"] = observations
+        return result
 
     env = OffScreenRenderEnv(
         bddl_file_name=str(bddl), camera_heights=256, camera_widths=256, control_freq=20,
@@ -499,6 +542,7 @@ def main() -> None:
     parser.add_argument("--extra-view-frame", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--rgbd", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--release-tail", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--dense-release", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not 1 <= args.steps <= 520:
         parser.error("--steps must be between 1 and 520")
@@ -507,9 +551,12 @@ def main() -> None:
             parser.error("video recording requires a standalone replay worker")
         if args.release_tail and (not args.rgbd or args.socket is not None or args.video is not None):
             parser.error("diagnostic release observations require a standalone RGB-D replay")
+        if args.dense_release and (not args.rgbd or args.socket is not None or args.video is not None):
+            parser.error("dense release observations require the standalone RGB-D worker")
         simulate(
             args.output, args.roboenv, args.seed, args.init_index, args.socket, args.steps, args.scene,
             args.video, tuple(dict.fromkeys(args.extra_view)), args.extra_view_frame, args.rgbd, args.release_tail,
+            args.dense_release,
         )
         return
     if args.workspace is None or args.sim_python is None or args.socket is not None or args.video is not None:
