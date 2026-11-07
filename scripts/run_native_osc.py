@@ -15,6 +15,7 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
 CAMERAS = {"camera1": "agentview_image", "camera2": "robot0_eye_in_hand_image"}
+EXTRA_VIEWS = ("birdview", "frontview", "sideview", "galleryview", "paperview", "robot0_robotview")
 
 
 def validate_actions(actions: object) -> None:
@@ -29,6 +30,7 @@ def validate_actions(actions: object) -> None:
 def simulate(
     output: Path, roboenv: Path, seed: int, init_index: int,
     socket_path: Path | None, steps: int, scene: int, video_path: Path | None = None,
+    extra_views: tuple[str, ...] = (), extra_view_frame: int | None = None,
 ) -> None:
     # Keep the response pipe separate from native library diagnostics.
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
@@ -51,6 +53,7 @@ def simulate(
     if not 0 <= init_index < len(states):
         raise ValueError(f"init index must be between 0 and {len(states) - 1}")
     encoder = None
+    frames = 0
 
     def encode_frame(obs):
         if encoder is not None:
@@ -64,12 +67,19 @@ def simulate(
             eef_quat=obs["robot0_eef_quat"],
             gripper_qpos=obs["robot0_gripper_qpos"],
         )
-        np.savez(output / "observation.npz", **arrays)
+        extra = {}
+        if extra_views and (extra_view_frame is None or extra_view_frame == frames):
+            extra = {
+                name: env.env.sim.render(camera_name=name, width=512, height=512)[::-1].copy()
+                for name in extra_views
+            }
+        np.savez(output / "observation.npz", **arrays, **{f"visual_{name}": view for name, view in extra.items()})
         return {
             **metadata,
             "sim_time": float(env.env.sim.data.time),
             "sim_state_sha256": hashlib.sha256(env.get_sim_state().tobytes()).hexdigest(),
             "observation_sha256": {name: hashlib.sha256(a.tobytes()).hexdigest() for name, a in arrays.items()},
+            **({"extra_view_sha256": {name: hashlib.sha256(a.tobytes()).hexdigest() for name, a in extra.items()}} if extra else {}),
             "audit_goals": [
                 {"predicate": goal, "satisfied": bool(env.env._eval_predicate(goal))}
                 for goal in env.env.parsed_problem["goal_state"]
@@ -77,8 +87,10 @@ def simulate(
         }
 
     def advance(actions):
+        nonlocal frames
         for executed, action in enumerate(actions, start=1):
             obs, _, done, _ = env.step(np.asarray(action, dtype=np.float32))
+            frames += 1
             encode_frame(obs)
             success = bool(env.check_success())
             if success or done:
@@ -368,13 +380,18 @@ def main() -> None:
     parser.add_argument("--sim-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--socket", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--video", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--extra-view", action="append", choices=EXTRA_VIEWS, default=[], help=argparse.SUPPRESS)
+    parser.add_argument("--extra-view-frame", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not 1 <= args.steps <= 520:
         parser.error("--steps must be between 1 and 520")
     if args.sim_worker:
         if args.video is not None and args.socket is not None:
             parser.error("video recording requires a standalone replay worker")
-        simulate(args.output, args.roboenv, args.seed, args.init_index, args.socket, args.steps, args.scene, args.video)
+        simulate(
+            args.output, args.roboenv, args.seed, args.init_index, args.socket, args.steps, args.scene,
+            args.video, tuple(dict.fromkeys(args.extra_view)), args.extra_view_frame,
+        )
         return
     if args.workspace is None or args.sim_python is None or args.socket is not None or args.video is not None:
         parser.error("--workspace and --sim-python are required for a direct episode")
