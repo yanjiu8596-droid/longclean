@@ -31,12 +31,14 @@ SUPPLEMENTAL_VIEWS = {
     "front_zoom": ("frontview", (0.50, 0.24, 0.89, 0.61)),
     "paper_zoom": ("paperview", (0.50, 0.42, 0.87, 0.79)),
 }
+EXEMPLAR_STRATEGIES = ("example_zoom", "example_wrist")
 
 
 class VisualPlanner:
     def __init__(
         self, model_path: Path, task_id: str, labels: list[str], *,
         fixed: bool, strategy: str = "original", min_basket_margin: float | None = None,
+        references: dict | None = None,
     ) -> None:
         import torch
         from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -49,6 +51,7 @@ class VisualPlanner:
         self.fixed = fixed
         self.strategy = strategy
         self.min_basket_margin = min_basket_margin
+        self.references = references
         self.controller = CleanupController(
             TaskState.from_labels(task_id, labels), max_attempts=1 if fixed else 3, max_actions=10,
         )
@@ -90,7 +93,7 @@ class VisualPlanner:
                 "An object suspended above the rim or a different item inside the basket does not count as 1. "
                 "Answer with one digit."
             )
-        elif self.strategy in {"appearance", "basket_zoom", "basket_wrist", "basket_guard"}:
+        elif self.strategy in {"appearance", "basket_zoom", "basket_wrist", "basket_guard", *EXEMPLAR_STRATEGIES}:
             appearance = OBJECT_APPEARANCE[label]
             wrist = images[1]
             images = images[:1]
@@ -124,6 +127,21 @@ class VisualPlanner:
                     "the basket. Answer 1 only when its matching shape and color are visible resting inside "
                     "the white lining. A different item inside the basket does not count. If neither view "
                     "identifies the named item, answer 4. Output exactly one digit."
+                )
+            if self.strategy in EXEMPLAR_STRATEGIES:
+                images.insert(0, self.references[label])
+                if self.strategy == "example_wrist":
+                    images.append(wrist)
+                question = (
+                    f"The first image is a separate reference photograph of the target, a {appearance}. "
+                    "It does not show the current location. The second image shows the current scene, "
+                    "and the third zooms in on the basket on the left of the same scene. "
+                    + ("The last image is a different view from the gripper. " if len(images) == 4 else "")
+                    + "Match the exact target from the first image by shape, color and label. "
+                    "In the current scene, answer 1 if it is resting inside the white-lined basket, "
+                    "2 if it is outside, 3 if it is held in the robot fingers, or 4 if it is hidden. "
+                    "An item of a different color or only held above the rim does not count as 1. "
+                    "Reply with one digit."
                 )
         elif self.strategy != "original":
             if self.strategy == "external":

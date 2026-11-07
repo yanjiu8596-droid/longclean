@@ -83,4 +83,5 @@ def accepted_visual_provider(report_path: Path, project: Path, workspace: Path) 
         **provider["model"], "strategy": provider["strategy"],
         "min_basket_margin": provider.get("min_basket_margin"),
         "supplemental_camera": provider.get("supplemental_camera"),
+        "references": report.get("references"),
     }

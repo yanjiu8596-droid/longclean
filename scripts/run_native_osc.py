@@ -286,9 +286,13 @@ def episode(args: argparse.Namespace) -> dict:
 
                         state = TaskState.from_labels(record["task_id"], labels)
                         if args.method == "closed_loop_vla":
+                            from native_visual_references import load_references
+
+                            references = visual_provider["references"]
                             planner = VisualPlanner(
                                 visual_path, record["task_id"], labels, fixed=False, strategy=visual_provider["strategy"],
                                 min_basket_margin=visual_provider["min_basket_margin"],
+                                references=load_references(args.visual_validation.parent, references) if references else None,
                             )
                             record["vision"] = visual_provider
                             record_visual(planner.inventory(obs), initial, "inventory")
@@ -377,6 +381,8 @@ def episode(args: argparse.Namespace) -> dict:
         record["error"] = str(exc)
         raise
     finally:
+        if torch.cuda.is_initialized():
+            record["cuda_peak_reserved_mib"] = math.ceil(torch.cuda.max_memory_reserved() / (1024 * 1024))
         record["finished_at"] = datetime.now(timezone.utc).isoformat()
         (output / "episode.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     return record

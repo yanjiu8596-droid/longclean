@@ -117,6 +117,14 @@ def finalize(args):
                         raise ValueError(f"invalid artifact directory {artifact}")
                     add(f"visual/{phase}/{artifact}.jsonl", (args.run / phase / artifact / "visual.jsonl").read_bytes())
             add("index/visual-validation.json", visual_bytes)
+            for reference in (json.loads(visual_bytes).get("references") or {}).values():
+                name = reference["file"]
+                if Path(name).name != name or name in {".", ".."}:
+                    raise ValueError("invalid reference filename")
+                reference_data = (args.visual_validation.parent / "references" / name).read_bytes()
+                if sha256(reference_data).hexdigest() != reference["sha256"]:
+                    raise ValueError(f"visual reference checksum mismatch: {name}")
+                add(f"index/references/{name}", reference_data)
             add("index/paired-metrics.json", (json.dumps(report, indent=2) + "\n").encode())
             for scene in report["by_scene"]:
                 successful = [row for row in rows if row["scene"] == scene and row["completed"] and row["success"]]

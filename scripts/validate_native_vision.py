@@ -13,7 +13,8 @@ import sys
 import tomllib
 
 from probe_native_vision import PROJECT, TARGETS, VisualPlanner
-from native_visual import SUPPLEMENTAL_VIEWS
+from native_visual import EXEMPLAR_STRATEGIES, SUPPLEMENTAL_VIEWS
+from native_visual_references import create_references, load_references
 
 
 def panel(run: Path, scenes: dict, indices: range, count: int) -> dict:
@@ -128,13 +129,18 @@ def run(args) -> None:
         scenes = {int(s["source_task"].rsplit("-", 1)[1]): s["objects"] for s in tomllib.load(handle)["scenes"]}
     args.output.mkdir(parents=True, exist_ok=False)
     calibration = panel(args.run, scenes, range(15, 25), 2)
-    holdout_start = 32 if args.supplemental else 25
+    holdout_start = 32 if args.supplemental or args.exemplars else 25
     report = {
         "source": str(args.run), "calibration_indices": [15, 24], "holdout_indices": [holdout_start, 49],
         "project_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True).strip(),
         "calibration": {}, "gate_passed": False,
     }
-    if args.supplemental:
+    references = None
+    if args.exemplars:
+        report["references"] = create_references(args.run, args.output)
+        references = load_references(args.output, report["references"])
+        models = [("qwen3_vl_4b_instruct", args.qwen3, EXEMPLAR_STRATEGIES)]
+    elif args.supplemental:
         models = [("qwen3_vl_4b_instruct", args.qwen3, tuple(SUPPLEMENTAL_VIEWS))]
     elif args.qwen3 is not None:
         models = [("qwen3_vl_4b_instruct", args.qwen3, ("basket_zoom", "basket_wrist", "basket_guard"))]
@@ -163,9 +169,9 @@ def run(args) -> None:
         supplemental = replay_views(args, calibration, "calibration", [camera for camera, _ in SUPPLEMENTAL_VIEWS.values()])
     for model_id, path, strategies in models:
         pin = model_pin(path, model_id)
-        planner = VisualPlanner(path, "vision-validation", ["probe target"], fixed=False)
+        planner = VisualPlanner(path, "vision-validation", ["probe target"], fixed=False, references=references)
         for strategy in strategies:
-            scored = args.supplemental or args.confidence or (args.qwen3 is not None and strategy == "basket_zoom")
+            scored = args.exemplars or args.supplemental or args.confidence or (args.qwen3 is not None and strategy == "basket_zoom")
             planner.min_basket_margin = 0.0 if scored else None
             _, records = evaluate(planner, calibration, strategy, supplemental)
             for margin in (0, 0.5, 1, 2, 3, 4, 5) if scored else (None,):
@@ -192,7 +198,9 @@ def run(args) -> None:
     holdout = panel(args.run, scenes, range(holdout_start, 50), 4)
     if args.supplemental:
         supplemental = replay_views(args, holdout, "holdout", [SUPPLEMENTAL_VIEWS[strategy][0]])
-    planner = VisualPlanner(path, "vision-validation", ["probe target"], fixed=False, min_basket_margin=margin)
+    planner = VisualPlanner(
+        path, "vision-validation", ["probe target"], fixed=False, min_basket_margin=margin, references=references,
+    )
     score, records = evaluate(planner, holdout, strategy, supplemental)
     report["holdout"] = {
         "model": model_pin(path, model_id), "strategy": strategy, "min_basket_margin": margin, "score": score, "records": records,
@@ -214,6 +222,7 @@ if __name__ == "__main__":
     strategies.add_argument("--confidence", action="store_true")
     strategies.add_argument("--qwen3", type=Path)
     parser.add_argument("--supplemental", action="store_true")
+    parser.add_argument("--exemplars", action="store_true")
     parser.add_argument("--sim-python", type=Path)
     parser.add_argument("--roboenv", type=Path)
     parser.add_argument("--replay-workers", type=int, choices=range(1, 9), default=5)
@@ -222,4 +231,6 @@ if __name__ == "__main__":
         parser.error("this validation mode requires --qwen")
     if args.supplemental and any(value is None for value in (args.qwen3, args.sim_python, args.roboenv)):
         parser.error("supplemental views require --qwen3, --sim-python and --roboenv")
+    if args.exemplars and (args.qwen3 is None or args.supplemental):
+        parser.error("exemplars require --qwen3 and cannot be combined with --supplemental")
     run(args)

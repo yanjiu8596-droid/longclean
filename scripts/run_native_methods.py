@@ -73,7 +73,7 @@ def inspect_episode(job, artifact, code, elapsed, commit):
         **{name: episode.get(name) for name in (
             "success", "steps", "step_budget", "chunk_horizon", "init_state_sha256", "bddl_sha256",
             "vla_calls", "visual_calls", "model", "vision", "project_commit", "terminal_reason", "error",
-            "supplemental_camera",
+            "supplemental_camera", "cuda_peak_reserved_mib",
         )},
     }
     if not completed:
@@ -160,7 +160,7 @@ def run(args):
         active[job] = (proc, artifact, time.monotonic(), retry)
         return True
 
-    def phase(name):
+    def phase(name, visual_peak_mib=0):
         summary["phase"] = name
         directory = root / name
         directory.mkdir(exist_ok=True)
@@ -181,6 +181,7 @@ def run(args):
                 "completed": len(done), "planned": len(planned), "errors": errors,
                 "successes": dict(Counter(row["method"] for row in done.values() if row["success"])),
                 "workers": workers, "visual_workers": visual_workers,
+                "visual_peak_estimate_mib": visual_peak_mib,
             }
             save()
 
@@ -199,7 +200,12 @@ def run(args):
                 if len(active) >= workers or blocked:
                     break
                 job, retry = pending.popleft()
-                if job[3] == "closed_loop_vla" and sum(j[3] == "closed_loop_vla" for j in active) >= visual_workers:
+                active_visual = sum(j[3] == "closed_loop_vla" for j in active)
+                is_visual = job[3] == "closed_loop_vla"
+                estimated = (active_visual + is_visual) * visual_peak_mib + (
+                    len(active) - active_visual + (not is_visual)
+                ) * args.baseline_peak_mib
+                if (is_visual and active_visual >= visual_workers) or (active and estimated > args.gpu_budget_mib):
                     pending.append((job, retry))
                     continue
                 while not launch(job, directory, retry):
@@ -238,7 +244,9 @@ def run(args):
         if not complete or not smoke_passed(smoke[0]):
             summary["status"] = "smoke_gate_failed"
             return
-        pilot, complete = phase("pilot")
+        # Add headroom for the CUDA context, EGL and non-PyTorch allocations.
+        visual_peak_mib = (smoke[0].get("cuda_peak_reserved_mib") or args.gpu_budget_mib) + 1024
+        pilot, complete = phase("pilot", visual_peak_mib)
         audits = [row["visual"] for row in pilot if "visual" in row]
         if (
             not complete or not paired(pilot, 9)
@@ -247,7 +255,7 @@ def run(args):
         ):
             summary["status"] = "pilot_gate_failed"
             return
-        formal, complete = phase("formal")
+        formal, complete = phase("formal", visual_peak_mib)
         summary["status"] = "completed" if complete and paired(formal, 45) else "formal_incomplete"
     except KeyboardInterrupt:
         summary["status"] = "stopped"
@@ -266,6 +274,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("output", "workspace", "roboenv", "sim-python", "visual-validation"):
         parser.add_argument(f"--{name}", type=Path, required=True)
-    parser.add_argument("--workers", type=int, choices=range(1, 9), default=4)
-    parser.add_argument("--visual-workers", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--workers", type=int, choices=range(1, 9), default=8)
+    parser.add_argument("--visual-workers", type=int, choices=(1, 2), default=2)
+    parser.add_argument("--gpu-budget-mib", type=int, default=22500)
+    parser.add_argument("--baseline-peak-mib", type=int, default=2800)
     run(parser.parse_args())
