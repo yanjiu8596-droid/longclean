@@ -64,6 +64,7 @@ class TemporalVision:
         self.events = {}
         self.identities = {}
         self.held_identities = {}
+        self.current_holds = {}
 
     def observe(self, step: int, images: list, commands: list[float], hashes: list[str], gripper_qpos, geometry=None) -> None:
         if step != len(self.commands) + len(commands) or self.frames and step <= self.frames[-1].step:
@@ -75,7 +76,8 @@ class TemporalVision:
     def open_after(self, before, after, *, rgbd=False):
         full = self.frames[0].gripper_width
         if rgbd:
-            return after.gripper_width >= max(0.64 * full, before.gripper_width + 0.010)
+            increase = after.gripper_width - before.gripper_width
+            return increase >= 0.018 or increase >= 0.010 and after.gripper_width >= 0.64 * full
         return after.gripper_width >= 0.8 * full
 
     def release_windows(self, *, rgbd=False):
@@ -145,6 +147,29 @@ class TemporalVision:
             and 0.018 < frame.gripper_width < 0.94 * full_width
             and frame.geometry["eef"][1] < 0.17 and frame.geometry["eef"][2] > 0.51
         ), before)
+
+    def current_hold(self, planner):
+        current = self.frames[-1]
+        if current.step in self.current_holds:
+            return self.current_holds[current.step], 0
+        last_open = max((after.step for _, _, after in self.release_windows(rgbd=True)), default=0)
+        after_open = self.commands[last_open:current.step]
+        if (
+            len(after_open) < 3 or not 0.014 < current.gripper_width < 0.94 * self.frames[0].gripper_width
+            or not any(all(value >= 0.5 for value in after_open[i:i + 3]) for i in range(len(after_open) - 2))
+        ):
+            self.current_holds[current.step] = None
+            return None, 0
+        view = next((
+            frame for frame in reversed(self.frames)
+            if frame.step > last_open and abs(frame.gripper_width - current.gripper_width) < 0.007
+            and frame.geometry["eef"][1] < 0.17 and frame.geometry["eef"][2] > 0.51
+        ), current)
+        # Opening commands alone do not establish release while the measured gap is unchanged.
+        identity, calls = held_identity(planner, view)
+        result = {**identity, "frame": view.step, "image_sha256": view.hashes, "current_gripper_width": current.gripper_width}
+        self.current_holds[current.step] = result
+        return result, calls
 
     def depth_event(self, planner, target_id, label, released, before, after, current, use_static):
         observations = []
@@ -302,11 +327,18 @@ class TemporalVision:
                 status, reason = "in_basket", "visible_after_release"
         if status == "in_basket" and accepted is None:
             status, reason = "unknown", "basket_moved" if not basket_valid else "placement_unconfirmed"
+        holding = None
+        if rgbd and status == "unknown" and accepted is None:
+            holding, count = self.current_hold(planner)
+            calls += count
+            if holding is not None and holding["parsed"] and holding["label"] == label:
+                status, reason = "grasped", "target_still_held"
         return {
             "target_id": target_id, "target": label, "status": status, "inferences": calls,
             "parsed": current_vote["parsed"] and all(
                 item["parsed"] and item.get("identity", {}).get("parsed", True) for item in evidence
-            ),
+            ) and (holding is None or holding["parsed"]),
             "raw": reason, "current": current_vote, "history": evidence,
+            "current_hold": holding,
             "initial_wall_difference": initial_delta, "confirmed_frame": accepted,
         }

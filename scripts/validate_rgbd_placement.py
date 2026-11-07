@@ -31,6 +31,14 @@ def calibrate(args):
         "model": model_pin(args.model, MODEL), "references": references, "gate_passed": False,
         "calibration": evaluate(planner, cases, args.frames, RGBD_STRATEGIES, "calibration"), "regression": {},
     }
+    if args.diagnostic_report:
+        previous = json.loads(args.diagnostic_report.read_bytes())
+        groups = defaultdict(dict)
+        for row in previous["holdout"]["records"]:
+            key = row["scene"], row["target"], row["expected_in_basket"]
+            folder = next(Path(source) / row["artifact"] for source in previous["sources"] if (Path(source) / row["artifact"]).is_dir())
+            groups[key][len(groups[key])] = row, folder
+        report["diagnostic"] = evaluate(planner, groups, args.diagnostic_frames, RGBD_STRATEGIES, "seen-regression")
     metadata = json.loads((args.regression / "verified.json").read_bytes())
     for strategy in RGBD_STRATEGIES:
         answers = []
@@ -42,16 +50,26 @@ def calibrate(args):
     candidates = [
         strategy for strategy, trial in report["calibration"].items()
         if qualified(trial["score"], holdout=False)
+        and (
+            not args.diagnostic_report or
+            report["diagnostic"][strategy]["score"]["correct"] >= 40
+            and report["diagnostic"][strategy]["score"]["false_positive"] == 0
+        )
         and report["regression"][strategy][0]["answer"]["status"] != "in_basket"
         and report["regression"][strategy][-1]["answer"]["status"] == "in_basket"
     ]
     report["status"] = "calibrated" if candidates else "calibration_failed"
     if candidates:
-        report["selected"] = f"{MODEL}/{max(candidates, key=lambda key: report['calibration'][key]['score']['correct'])}"
+        selected = max(candidates, key=lambda key: (
+            report.get("diagnostic", report["calibration"])[key]["score"]["correct"],
+            report["calibration"][key]["score"]["correct"],
+        ))
+        report["selected"] = f"{MODEL}/{selected}"
     (args.output / "calibration.json").write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     print(json.dumps({
         "status": report["status"], "selected": report.get("selected"),
         "calibration": {key: trial["score"] for key, trial in report["calibration"].items()},
+        "seen_regression": {key: trial["score"] for key, trial in report.get("diagnostic", {}).items()},
         "regression": {key: [(row["step"], row["answer"]["status"]) for row in rows] for key, rows in report["regression"].items()},
     }), flush=True)
 
@@ -121,6 +139,7 @@ def accept(args):
         raise ValueError("visual weights differ from calibration")
     strategy = report["selected"].split("/", 1)[1]
     excluded = {row["init_state_sha256"] for trial in report["calibration"].values() for row in trial["records"]}
+    excluded.update(row["init_state_sha256"] for trial in report.get("diagnostic", {}).values() for row in trial["records"])
     excluded.add(json.loads((args.regression / "verified.json").read_bytes())["init_state_sha256"])
     cases = holdout_cases(args.holdout_run, excluded)
     args.output.mkdir(parents=True, exist_ok=False)
@@ -159,7 +178,11 @@ if __name__ == "__main__":
     parser.add_argument("--workers", type=int, choices=range(1, 11), default=8)
     parser.add_argument("--calibration", type=Path)
     parser.add_argument("--holdout-run", type=Path, action="append", default=[])
+    parser.add_argument("--diagnostic-report", type=Path)
+    parser.add_argument("--diagnostic-frames", type=Path)
     args = parser.parse_args()
     if bool(args.calibration) != bool(args.holdout_run):
         parser.error("--calibration and --holdout-run must be supplied together")
+    if bool(args.diagnostic_report) != bool(args.diagnostic_frames):
+        parser.error("--diagnostic-report and --diagnostic-frames must be supplied together")
     (accept if args.calibration else calibrate)(args)
