@@ -59,6 +59,10 @@ def held_crops(before):
 def held_identity(planner, before):
     from PIL import Image, ImageDraw
 
+    verifier = getattr(planner, "held_logo", None)
+    local = verifier.inspect(before) if verifier is not None else None
+    if local is not None and local["label"] is not None:
+        return {"raw": "wrist logo matched at grasp depth", "label": local["label"], "parsed": True, "local_identity": local}, 0
     held = [crop for _, crop in held_crops(before)]
     if not held:
         return {"raw": "no held-object pixels", "label": None, "parsed": True}, 0
@@ -79,7 +83,10 @@ def held_identity(planner, before):
     raw = planner.answer([examples, *held], prompt)
     token = raw.strip(". \n\t")
     identity = {str(index + 1): label for index, label in enumerate(labels)}
-    return {"raw": raw, "label": identity.get(token), "parsed": token in (*identity, "5")}, 1
+    return {
+        "raw": raw, "label": identity.get(token), "parsed": token in (*identity, "5"),
+        **({"local_identity": local} if local is not None else {}),
+    }, 1
 
 
 def color_mask(image, label):
