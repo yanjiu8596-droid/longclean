@@ -28,7 +28,7 @@ def validate_actions(actions: object) -> None:
 
 def simulate(
     output: Path, roboenv: Path, seed: int, init_index: int,
-    socket_path: Path | None, steps: int,
+    socket_path: Path | None, steps: int, scene: int,
 ) -> None:
     # Keep the response pipe separate from native library diagnostics.
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
@@ -45,9 +45,9 @@ def simulate(
     from libero.libero.envs.env_wrapper import OffScreenRenderEnv
 
     suite = get_benchmark_dict()["libero_10"](task_order_index=0)
-    task = suite.get_task(0)
+    task = suite.get_task(scene - 1)
     bddl = Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file
-    states = suite.get_task_init_states(0)
+    states = suite.get_task_init_states(scene - 1)
     if not 0 <= init_index < len(states):
         raise ValueError(f"init index must be between 0 and {len(states) - 1}")
 
@@ -64,6 +64,10 @@ def simulate(
             "sim_time": float(env.env.sim.data.time),
             "sim_state_sha256": hashlib.sha256(env.get_sim_state().tobytes()).hexdigest(),
             "observation_sha256": {name: hashlib.sha256(a.tobytes()).hexdigest() for name, a in arrays.items()},
+            "audit_goals": [
+                {"predicate": goal, "satisfied": bool(env.env._eval_predicate(goal))}
+                for goal in env.env.parsed_problem["goal_state"]
+            ],
         }
 
     def advance(actions):
@@ -98,6 +102,8 @@ def simulate(
             settle_frames=10,
             seed=seed,
             init_state_index=init_index,
+            init_state_count=len(states),
+            success=bool(env.check_success()),
             init_state_sha256=initial_state_hash,
             bddl_sha256=hashlib.sha256(bddl.read_bytes()).hexdigest(),
         )
@@ -138,13 +144,14 @@ def episode(args: argparse.Namespace) -> dict:
             ["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True,
         ).strip(),
         "started_at": datetime.now(timezone.utc).isoformat(),
-        "task_id": "libero/libero-10-01",
-        "method": "direct_vla",
+        "task_id": f"libero/libero-10-{args.scene:02d}",
+        "method": args.method,
         "seed": args.seed,
         "init_state_index": args.init_index,
         "step_budget": args.steps,
         "steps": 0,
         "vla_calls": 0,
+        "visual_calls": 0,
         "success": None,
         "terminal_reason": "runtime_error",
     }
@@ -153,7 +160,7 @@ def episode(args: argparse.Namespace) -> dict:
     worker_command = [
         str(args.sim_python), str(Path(__file__).resolve()), "--sim-worker",
         "--roboenv", str(args.roboenv), "--output", str(output),
-        "--seed", str(args.seed), "--init-index", str(args.init_index),
+        "--seed", str(args.seed), "--init-index", str(args.init_index), "--scene", str(args.scene),
     ]
 
     def read_observation(instruction, image_label=None):
@@ -180,6 +187,16 @@ def episode(args: argparse.Namespace) -> dict:
             raise RuntimeError("LIBERO worker closed its response pipe; see simulator.log")
         return json.loads(line)
 
+    def record_visual(observations, simulator, stage):
+        # The predicates are written to evidence after inference and never enter the prompt.
+        record["visual_calls"] += len(observations)
+        with (output / "visual.jsonl").open("a", encoding="utf-8") as log:
+            for observation in observations:
+                log.write(json.dumps({
+                    **observation, "stage": stage, "frame": record["steps"],
+                    "audit_goals": simulator["audit_goals"],
+                }) + "\n")
+
     try:
         with (output / "simulator.log").open("w", encoding="utf-8") as sim_log, (
             output / "actions.jsonl"
@@ -198,32 +215,69 @@ def episode(args: argparse.Namespace) -> dict:
                 config = yaml.safe_load((artifact_root / "profile.yaml").read_text(encoding="utf-8"))
                 record["model_artifacts"] = config["intrinsics"]["artifacts"]
                 record["model"] = config["intrinsics"]["variant"]
-                service = open_service(config, artifact_root=artifact_root)
-                horizon = service["policy"].config.n_action_steps
-                record["chunk_horizon"] = horizon
-                while record["steps"] < args.steps:
+                planner = None
+                if args.method != "direct_vla":
+                    import tomllib
+
+                    sys.path.insert(0, str(PROJECT / "src"))
+                    from native_visual import VisualPlanner
+
+                    with (PROJECT / "configs" / "v1_eval.toml").open("rb") as settings:
+                        scenes = tomllib.load(settings)["scenes"]
+                    labels = next(scene["objects"] for scene in scenes if scene["source_task"] == record["task_id"])
+                    base = next(a for a in record["model_artifacts"] if a["name"] == "smolvlm2_500m_video_instruct")
+                    planner = VisualPlanner(
+                        (artifact_root / base["path"]).resolve(), record["task_id"], labels,
+                        fixed=args.method == "fixed_checklist_vla",
+                    )
+                    record_visual(planner.inventory(obs), initial, "inventory")
+                service = None
+                horizon = args.chunk_steps or (10 if planner else None)
+                record["final_sim_time"] = initial["sim_time"]
+                record["terminal_reason"] = "simulator_success" if initial["success"] else "step_budget"
+                while not record["success"] and record["steps"] < args.steps:
+                    target = None
+                    if planner:
+                        subtask = planner.next_subtask()
+                        if subtask is None:
+                            record["terminal_reason"] = "checklist_end" if planner.fixed else (
+                                "visual_clear" if planner.controller.is_cleared() else "attempt_limit"
+                            )
+                            break
+                        target = subtask.target_id
+                        instruction = subtask.instruction
+                    if service is None:
+                        service = open_service(config, artifact_root=artifact_root)
+                        horizon = horizon or service["policy"].config.n_action_steps
+                        record["chunk_horizon"] = horizon
                     count = min(horizon, args.steps - record["steps"])
-                    actions = predict_chunk(service, obs)[:count]
+                    actions = predict_chunk(service, {**obs, "task": instruction})[:count]
                     worker.stdin.write(json.dumps(actions, allow_nan=False) + "\n")
                     worker.stdin.flush()
                     result = receive(worker)
                     executed = result["executed"]
                     if not 1 <= executed <= len(actions):
                         raise RuntimeError(f"invalid executed frame count: {executed}")
-                    trace.write(json.dumps({"start_step": record["steps"], "actions": actions[:executed], **result}) + "\n")
+                    trace.write(json.dumps({
+                        "start_step": record["steps"], "actions": actions[:executed],
+                        "instruction": instruction, "target_id": target, **result,
+                    }) + "\n")
                     record["steps"] += executed
                     record["vla_calls"] += 1
                     record["success"] = result["success"]
                     record["final_sim_time"] = result["sim_time"]
+                    record["audit_goals"] = result["audit_goals"]
+                    obs = read_observation(instruction)
+                    if planner and not planner.fixed:
+                        record_visual([planner.update(obs, target)], result, "progress")
                     print(f"steps={record['steps']} simulator_success={record['success']}", flush=True)
                     if result["success"] or result["done"] or record["steps"] == args.steps:
-                        read_observation(instruction, "final")
                         record["terminal_reason"] = (
                             "simulator_success" if result["success"]
                             else "simulator_done" if result["done"] else "step_budget"
                         )
                         break
-                    obs = read_observation(instruction)
+                read_observation(instruction, "final")
             finally:
                 try:
                     worker.stdin.close()
@@ -251,13 +305,16 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--init-index", type=int, default=0)
     parser.add_argument("--steps", type=int, default=520)
+    parser.add_argument("--scene", type=int, choices=(1, 2, 8), default=1)
+    parser.add_argument("--chunk-steps", type=int, choices=range(1, 51), metavar="1..50")
+    parser.add_argument("--method", choices=("direct_vla", "fixed_checklist_vla", "closed_loop_vla"), default="direct_vla")
     parser.add_argument("--sim-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--socket", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not 1 <= args.steps <= 520:
         parser.error("--steps must be between 1 and 520")
     if args.sim_worker:
-        simulate(args.output, args.roboenv, args.seed, args.init_index, args.socket, args.steps)
+        simulate(args.output, args.roboenv, args.seed, args.init_index, args.socket, args.steps, args.scene)
         return
     if args.workspace is None or args.sim_python is None or args.socket is not None:
         parser.error("--workspace and --sim-python are required for a direct episode")
