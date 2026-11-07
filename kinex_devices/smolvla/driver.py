@@ -9,7 +9,6 @@ import sys
 from typing import Any
 
 import yaml
-from kinex.driver_protocol import run
 
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -20,14 +19,14 @@ def profile() -> dict[str, Any]:
     return yaml.safe_load((HERE / "profile.yaml").read_text(encoding="utf-8"))
 
 
-def open_service(config: dict[str, Any]) -> dict[str, Any]:
+def open_service(config: dict[str, Any], *, artifact_root: pathlib.Path = HERE) -> dict[str, Any]:
     import torch
     from lerobot.policies.factory import make_pre_post_processors
     from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
     artifacts = {
-        item["name"]: (HERE / item["path"]).resolve()
+        item["name"]: (artifact_root / item["path"]).resolve()
         for item in config["intrinsics"]["artifacts"]
     }
     model_path = artifacts["smolvla_libero"]
@@ -108,6 +107,12 @@ def infer(service: dict[str, Any], operation: str, args: dict[str, Any]) -> dict
         "observation.state": torch.tensor(state, dtype=torch.float32),
         "task": task.strip(),
     }
+    return {"actions": predict_chunk(service, batch)}
+
+
+def predict_chunk(service: dict[str, Any], batch: dict[str, Any]) -> list[list[float]]:
+    import torch
+
     batch = service["preprocessor"](batch)
     with torch.inference_mode():
         actions = service["policy"].predict_action_chunk(batch)
@@ -117,7 +122,7 @@ def infer(service: dict[str, Any], operation: str, args: dict[str, Any]) -> dict
     if actions.ndim != 3 or actions.shape[0] != 1 or actions.shape[2] != 7:
         raise ValueError(f"unexpected action chunk shape: {tuple(actions.shape)}")
 
-    return {"actions": actions[0].detach().cpu().tolist()}
+    return actions[0].detach().cpu().tolist()
 
 
 def _image_tensor(
@@ -173,6 +178,8 @@ def respond(action: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> None:
+    from kinex.driver_protocol import run
+
     run(respond, lambda: handle("unload", {}))
 
 
