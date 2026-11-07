@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Deterministic one-action acceptance smoke without an LLM provider.
+// Bounded action acceptance smoke without an LLM provider.
 
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -35,6 +35,7 @@ const invocation = {
   sessionID: "tableclear-device-smoke",
   signal: AbortSignal.timeout(900_000),
 };
+const native = Boolean(process.env.TABLECLEAR_NATIVE_OSC_SOCKET);
 
 try {
   const devices = await runtime.devices.list();
@@ -46,9 +47,11 @@ try {
   const call = await runtime.tools.call(
     "run_vla_subtask",
     {
-      instruction: "pick up the object on the table and put it in the basket",
-      max_actions: 1,
-      action_hz: 30,
+      instruction: native
+        ? "put both the alphabet soup and the tomato sauce in the basket"
+        : "pick up the object on the table and put it in the basket",
+      max_actions: native ? 10 : 1,
+      action_hz: native ? 20 : 30,
     },
     invocation,
   );
@@ -57,6 +60,9 @@ try {
   }
 
   const subtask = JSON.parse(call.output);
+  if (native && subtask.control_protocol !== "libero_native_osc") {
+    throw new Error("Kinex did not use the native OSC session");
+  }
   await mkdir(outputDirectory, { recursive: true });
   subtask.before_images = await persistImages(
     subtask.before_images,

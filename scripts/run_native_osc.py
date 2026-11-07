@@ -17,7 +17,19 @@ PROJECT = Path(__file__).resolve().parents[1]
 CAMERAS = {"camera1": "agentview_image", "camera2": "robot0_eye_in_hand_image"}
 
 
-def simulate(output: Path, roboenv: Path, seed: int, init_index: int) -> None:
+def validate_actions(actions: object) -> None:
+    if not isinstance(actions, list) or not 1 <= len(actions) <= 50 or any(
+        not isinstance(action, list) or len(action) != 7
+        or not all(type(value) in (float, int) and math.isfinite(value) for value in action)
+        for action in actions
+    ):
+        raise ValueError("expected 1 to 50 finite 7D actions")
+
+
+def simulate(
+    output: Path, roboenv: Path, seed: int, init_index: int,
+    socket_path: Path | None, steps: int,
+) -> None:
     # Keep the response pipe separate from native library diagnostics.
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
@@ -39,15 +51,28 @@ def simulate(output: Path, roboenv: Path, seed: int, init_index: int) -> None:
     if not 0 <= init_index < len(states):
         raise ValueError(f"init index must be between 0 and {len(states) - 1}")
 
-    def publish(obs, **metadata):
-        np.savez(
-            output / "observation.npz",
+    def capture(obs, **metadata):
+        arrays = dict(
             **{name: obs[key] for name, key in CAMERAS.items()},
             eef_pos=obs["robot0_eef_pos"],
             eef_quat=obs["robot0_eef_quat"],
             gripper_qpos=obs["robot0_gripper_qpos"],
         )
-        print(json.dumps(metadata, allow_nan=False), file=protocol, flush=True)
+        np.savez(output / "observation.npz", **arrays)
+        return {
+            **metadata,
+            "sim_time": float(env.env.sim.data.time),
+            "sim_state_sha256": hashlib.sha256(env.get_sim_state().tobytes()).hexdigest(),
+            "observation_sha256": {name: hashlib.sha256(a.tobytes()).hexdigest() for name, a in arrays.items()},
+        }
+
+    def advance(actions):
+        for executed, action in enumerate(actions, start=1):
+            obs, _, done, _ = env.step(np.asarray(action, dtype=np.float32))
+            success = bool(env.check_success())
+            if success or done:
+                break
+        return capture(obs, executed=executed, success=success, done=bool(done))
 
     env = OffScreenRenderEnv(
         bddl_file_name=str(bddl), camera_heights=256, camera_widths=256, control_freq=20,
@@ -65,35 +90,30 @@ def simulate(output: Path, roboenv: Path, seed: int, init_index: int) -> None:
         controller.use_delta = True
         if controller.name != "OSC_POSE" or env.env.robots[0].action_dim != 7:
             raise RuntimeError("expected a 7D native OSC_POSE action space")
-        publish(
+        initial = capture(
             obs,
             instruction=task.language,
             controller=controller.name,
             control_hz=env.env.control_freq,
             settle_frames=10,
+            seed=seed,
+            init_state_index=init_index,
             init_state_sha256=initial_state_hash,
             bddl_sha256=hashlib.sha256(bddl.read_bytes()).hexdigest(),
-            sim_time=float(env.env.sim.data.time),
         )
+        if socket_path is not None:
+            from native_osc_session import serve
 
+            serve(socket_path, output, initial, steps, validate_actions, advance)
+            return
+
+        print(json.dumps(initial, allow_nan=False), file=protocol)
         for line in sys.stdin:
             actions = json.loads(line)
-            if not isinstance(actions, list) or not 1 <= len(actions) <= 50 or any(
-                not isinstance(action, list) or len(action) != 7
-                or not all(type(value) in (float, int) and math.isfinite(value) for value in action)
-                for action in actions
-            ):
-                raise ValueError("expected 1 to 50 finite 7D actions")
-            for executed, action in enumerate(actions, start=1):
-                obs, _, done, _ = env.step(np.asarray(action, dtype=np.float32))
-                success = bool(env.check_success())
-                if success or done:
-                    break
-            publish(
-                obs, executed=executed, success=success, done=bool(done),
-                sim_time=float(env.env.sim.data.time),
-            )
-            if success or done:
+            validate_actions(actions)
+            result = advance(actions)
+            print(json.dumps(result, allow_nan=False), file=protocol)
+            if result["success"] or result["done"]:
                 break
     finally:
         env.close()
@@ -232,12 +252,15 @@ def main() -> None:
     parser.add_argument("--init-index", type=int, default=0)
     parser.add_argument("--steps", type=int, default=520)
     parser.add_argument("--sim-worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--socket", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if not 1 <= args.steps <= 520:
+        parser.error("--steps must be between 1 and 520")
     if args.sim_worker:
-        simulate(args.output, args.roboenv, args.seed, args.init_index)
+        simulate(args.output, args.roboenv, args.seed, args.init_index, args.socket, args.steps)
         return
-    if args.workspace is None or args.sim_python is None or not 1 <= args.steps <= 520:
-        parser.error("--workspace and --sim-python are required, with --steps between 1 and 520")
+    if args.workspace is None or args.sim_python is None or args.socket is not None:
+        parser.error("--workspace and --sim-python are required for a direct episode")
     print(json.dumps(episode(args), indent=2))
 
 

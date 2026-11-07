@@ -37,5 +37,6 @@ parameters:
     action_hz:
       type: number
       default: 30
+      description: Scheduler rate for the joint-position backend. Native LIBERO OSC uses 20 Hz.
   required: [instruction]
 

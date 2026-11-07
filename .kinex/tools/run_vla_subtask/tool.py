@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import math
+import os
+import socket
 from collections.abc import Callable
 from typing import Any
 
@@ -16,6 +19,7 @@ def execute(
     call: Callable[..., dict[str, Any]],
     stop_owned: Callable[[], Any],
     profile: Callable[[str], dict[str, Any]] | None = None,
+    native_request: Callable[[dict], dict] | None = None,
 ) -> dict[str, Any]:
     instruction = request.get("instruction")
     if not isinstance(instruction, str) or not instruction.strip():
@@ -25,11 +29,14 @@ def execute(
     if not 1 <= max_actions <= 50:
         raise VLAToolError("max_actions must be between 1 and 50")
 
+    model = str(request.get("model", "smolvla"))
+    if native_request is not None:
+        return _execute_native(instruction, max_actions, model, device, native_request)
+
     action_hz = float(request.get("action_hz", 30))
     if action_hz <= 0:
         raise VLAToolError("action_hz must be positive")
 
-    model = str(request.get("model", "smolvla"))
     head_camera = str(request.get("head_camera", "camera"))
     wrist_camera = str(request.get("wrist_camera", "camera_wrist"))
     arm = str(request.get("arm", "arm"))
@@ -93,6 +100,54 @@ def execute(
         }
     finally:
         stop_owned()
+
+
+def _execute_native(instruction, max_actions, model, device, request):
+    before = request({"op": "observe"})
+    if before["controller"] != "OSC_POSE" or before["control_hz"] != 20:
+        raise VLAToolError("expected the native 20 Hz LIBERO OSC controller")
+    if before["terminal"]:
+        raise VLAToolError("the native episode already ended")
+    actions = device(model, "infer", {
+        "obs": {
+            "camera1": before["raw_images"][0],
+            "camera2": before["raw_images"][1],
+            "state": before["state"],
+        },
+        "task": instruction,
+    }).get("actions")
+    if not isinstance(actions, list) or not actions:
+        raise VLAToolError("SmolVLA returned no actions")
+    after = request({"op": "step", "frame": before["frame"], "actions": actions[:max_actions]})
+    return {
+        "execution_status": "completed",
+        "control_protocol": "libero_native_osc",
+        "instruction": instruction,
+        "model": model,
+        "actions_submitted": after["executed"],
+        "duration_s": after["sim_time"] - before["sim_time"],
+        "frame": after["frame"],
+        "before_images": before["images"],
+        "after_images": after["images"],
+        "observation_state": before["state"],
+        "after_observation_state": after["state"],
+        "terminal": after["terminal"],
+    }
+
+
+def _native_request(path: str, message: dict) -> dict:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(60)
+        connection.connect(path)
+        connection.sendall(json.dumps(message, allow_nan=False).encode() + b"\n")
+        with connection.makefile("rb") as reply:
+            line = reply.readline(65_537)
+    if not line:
+        raise VLAToolError("native OSC session closed without a response")
+    result = json.loads(line)
+    if "error" in result:
+        raise VLAToolError(result["error"])
+    return result
 
 
 def _camera_file(
@@ -252,6 +307,7 @@ def _quaternion_xyzw_to_axis_angle(
 def main() -> None:
     from kinex import args, call, device, fail, finish, profile, stop_owned
 
+    native_socket = os.environ.get("TABLECLEAR_NATIVE_OSC_SOCKET")
     try:
         result = execute(
             dict(args()),
@@ -259,8 +315,9 @@ def main() -> None:
             call=call,
             stop_owned=stop_owned,
             profile=profile,
+            native_request=(lambda message: _native_request(native_socket, message)) if native_socket else None,
         )
-    except (VLAToolError, RuntimeError, ValueError, TypeError) as exc:
+    except (RuntimeError, ValueError, TypeError, OSError, KeyError) as exc:
         fail(str(exc))
     else:
         finish(result)

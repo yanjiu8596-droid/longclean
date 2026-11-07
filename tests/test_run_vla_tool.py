@@ -113,6 +113,37 @@ class RunVLAToolTests(unittest.TestCase):
                 profile=self.profile,
             )
 
+    def test_native_path_preserves_action_values_and_observation_frame(self) -> None:
+        before = {
+            "controller": "OSC_POSE", "control_hz": 20, "terminal": False,
+            "frame": 10, "sim_time": 1.0, "raw_images": ["raw-1", "raw-2"],
+            "images": ["oriented-1", "oriented-2"], "state": [0.0] * 8,
+        }
+        action = [0.25, -0.5, 0.1, 0.2, 0.3, -0.4, 1.09]
+        requests = []
+
+        def native_request(request):
+            requests.append(request)
+            if request["op"] == "observe":
+                return before
+            return {**before, "frame": 11, "sim_time": 1.05, "executed": 1}
+
+        def infer(name, operation, args):
+            self.assertEqual((name, operation), ("smolvla", "infer"))
+            self.assertEqual(args["obs"], {"camera1": "raw-1", "camera2": "raw-2", "state": [0.0] * 8})
+            return {"actions": [action, [0.0] * 7]}
+
+        def legacy(*args, **kwargs):
+            self.fail("native OSC must not call the joint scheduler")
+
+        result = self.tool.execute(
+            {"instruction": "Pick up the mug.", "max_actions": 1},
+            device=infer, call=legacy, stop_owned=legacy, native_request=native_request,
+        )
+        self.assertEqual(requests, [{"op": "observe"}, {"op": "step", "frame": 10, "actions": [action]}])
+        self.assertEqual(result["actions_submitted"], 1)
+        self.assertAlmostEqual(result["duration_s"], 0.05)
+
     def test_quaternion_conversion_uses_xyzw_order(self) -> None:
         half_angle = math.pi / 4.0
         axis_angle = self.tool._quaternion_xyzw_to_axis_angle(
