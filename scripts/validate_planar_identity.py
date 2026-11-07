@@ -8,12 +8,12 @@ import json
 from pathlib import Path
 import subprocess
 
+from validate_temporal_vision import MODEL, PROJECT, VisualPlanner, model_pin, trajectory
 from native_planar_identity import CREAM_LABEL, PlanarLogo
 from native_rgbd_placement import held_identity
 from native_visual_references import load_references
 from native_visual_windows import audit
 from probe_native_vision import TARGETS
-from validate_temporal_vision import MODEL, PROJECT, VisualPlanner, model_pin, trajectory
 
 
 LABELS = ("alphabet soup can", CREAM_LABEL)
