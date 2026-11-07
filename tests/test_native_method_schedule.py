@@ -7,12 +7,17 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from native_method_schedule import MethodSchedule, accepted_visual_provider
+from native_temporal_vision import release_steps
 from native_visual import VisualPlanner
 from run_native_methods import jobs_for
 from tableclear.state import TaskState
 
 
 class NativeMethodScheduleTests(unittest.TestCase):
+    def test_release_detection_requires_sustained_close_and_open(self):
+        commands = [-1, -1, 1, -1, 1, 1, 1, -1, -1, 1, -1, -1, -1, -1, 1, 1, 1, -1, -1, -1]
+        self.assertEqual(release_steps(commands), [11, 18])
+
     def schedule(self, method):
         return MethodSchedule(method, TaskState.from_labels("scene", ["can", "box"]), 520, 10)
 

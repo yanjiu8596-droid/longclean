@@ -15,6 +15,10 @@ from run_native_osc import CAMERAS
 from validate_native_vision import PROJECT, panel
 
 
+DEVELOPMENT = range(19, 40)
+HOLDOUT = range(40, 50)
+
+
 def replay(source: Path, output: Path, sim_python: Path, roboenv: Path) -> None:
     import numpy as np
 
@@ -125,5 +129,5 @@ if __name__ == "__main__":
         parser.add_argument(f"--{name}", type=Path, required=True)
     parser.add_argument("--workers", type=int, choices=range(1, 11), default=8)
     args = parser.parse_args()
-    calibration = panel(args.run, scene_labels(), range(19, 25), 2)
+    calibration = panel(args.run, scene_labels(), DEVELOPMENT, 2)
     replay_panel(calibration, args.output, args.sim_python, args.roboenv, args.workers)

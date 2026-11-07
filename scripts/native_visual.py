@@ -71,6 +71,9 @@ class VisualPlanner:
     def inspect_images(self, images: list, target_id: str, label: str) -> dict:
         if self.strategy != "basket_consensus":
             return self.inspect_with_strategy(images, target_id, label, self.strategy, self.min_basket_margin)
+        return self.inspect_consensus(images, target_id, label)
+
+    def inspect_consensus(self, images: list, target_id: str, label: str) -> dict:
         first = self.inspect_with_strategy(images, target_id, label, "basket_zoom", 3.0)
         second = self.inspect_with_strategy(images, target_id, label, "basket_wrist", None)
         evidence = [first, second]
