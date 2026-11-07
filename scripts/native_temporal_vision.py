@@ -8,7 +8,7 @@ from native_visual import OBJECT_APPEARANCE, STATUSES
 from tableclear.models import VerdictStatus
 
 
-TEMPORAL_STRATEGIES = ("temporal_identity", "temporal_veto")
+TEMPORAL_STRATEGIES = ("temporal_identity", "temporal_change")
 
 
 @dataclass
@@ -117,11 +117,14 @@ class TemporalVision:
         current = self.frames[-1]
         return basket_difference(self.frames[0], current) < 60 and basket_difference(confirmed, current) < 25
 
-    def identify_at(self, planner, released, before, after):
+    def identify_at(self, planner, released, before, after, strategy):
+        import numpy as np
         from PIL import Image, ImageDraw
 
-        if released in self.identities:
-            return self.identities[released], 0
+        use_change = strategy == "temporal_change" and basket_difference(before, after) < 12
+        key = released, use_change
+        if key in self.identities:
+            return self.identities[key], 0
         labels = list(OBJECT_APPEARANCE)
         examples = Image.new("RGB", (512, 148), "white")
         draw = ImageDraw.Draw(examples)
@@ -143,11 +146,29 @@ class TemporalVision:
             "Answer 5 if the released object is a different item, is hidden, or cannot be identified. "
             "Reply with one digit."
         )
-        raw = planner.answer([examples, before_crop, after_crop, before.images[1]], prompt)
+        views = [examples, before_crop, after_crop, before.images[1]]
+        if use_change:
+            old, new = (
+                np.asarray(frame.images[0], dtype=np.int16)[103:160, :88]
+                for frame in (before, after)
+            )
+            changed = np.abs(new - old).max(axis=2) > 26
+            highlighted = np.where(changed[..., None], new, new * 0.30).astype(np.uint8)
+            closeup = Image.fromarray(highlighted).resize((352, 228), Image.Resampling.BICUBIC)
+            views = [examples, closeup, before.images[1]]
+            prompt = (
+                "Image 1 shows four numbered reference packages. Image 2 highlights pixels that changed "
+                "near the basket when the robot opened its fingers. In that image, ignore darkened regions "
+                "where objects were already present. Image 3 shows the wrist view before opening. "
+                "Which package is newly released? 1 blue/yellow cylindrical soup can, "
+                "2 red/green cylindrical tomato sauce can, 3 blue/white rectangular cream cheese box, "
+                "4 orange-red butter carton. Answer 5 if no exact package can be identified. Reply with one digit."
+            )
+        raw = planner.answer(views, prompt)
         token = raw.strip(". \n\t")
         match = {str(index + 1): label for index, label in enumerate(labels)}
-        result = {"raw": raw, "label": match.get(token), "parsed": token in (*match, "5")}
-        self.identities[released] = result
+        result = {"raw": raw, "label": match.get(token), "parsed": token in (*match, "5"), "highlighted_change": use_change}
+        self.identities[key] = result
         return result, 1
 
     def inspect(self, planner, target_id: str, label: str, strategy: str, *, invalidated_through: int = -1) -> dict:
@@ -175,12 +196,10 @@ class TemporalVision:
                 delta = basket_difference(after, current)
                 evidence.append({**event, "wall_difference_to_current": delta, "wrist_lining_fraction": visible_lining})
                 if event["status"] == "in_basket" and delta < 25:
-                    identity, count = self.identify_at(planner, released, before, after)
+                    identity, count = self.identify_at(planner, released, before, after, strategy)
                     calls += count
                     evidence[-1]["identity"] = identity
-                    if identity["parsed"] and (
-                        identity["label"] == label or identity["label"] is None and strategy == "temporal_veto"
-                    ):
+                    if identity["parsed"] and identity["label"] == label:
                         accepted = after.step
                         break
             if accepted is not None:
