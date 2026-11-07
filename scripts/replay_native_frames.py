@@ -19,7 +19,7 @@ DEVELOPMENT = range(19, 40)
 HOLDOUT = range(40, 50)
 
 
-def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd: bool = False) -> None:
+def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd: bool = False, release_tail: bool = False) -> None:
     import numpy as np
 
     episode = json.loads((source / "episode.json").read_bytes())
@@ -34,6 +34,8 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
     ]
     if rgbd:
         command.append("--rgbd")
+    if release_tail:
+        command.append("--release-tail")
     frame_path = output / "observation.npz"
     frames, images, gripper_qpos, gripper_commands, image_hashes = [], [], [], [], []
     depths, intrinsics, extrinsics, eef_positions = [], [], [], []
@@ -48,8 +50,8 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
             raise RuntimeError(f"simulator did not respond; see {output / 'simulator.log'}")
         return json.loads(line)
 
-    def sample(metadata):
-        with np.load(frame_path, allow_pickle=False) as raw:
+    def sample(metadata, path=frame_path):
+        with np.load(path, allow_pickle=False) as raw:
             frames.append(step)
             images.append([raw[camera][::-1, ::-1].copy() for camera in CAMERAS])
             gripper_qpos.append(raw["gripper_qpos"])
@@ -92,6 +94,16 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
             raise RuntimeError(f"replay failed; see {output / 'simulator.log'}")
     if step != episode["steps"] or current["success"] != episode["success"]:
         raise ValueError(f"replay terminal result disagrees with {source}")
+    official_step = step
+    tail = output / "release-tail"
+    tail_records = []
+    if tail.is_dir():
+        tail_records = json.loads((tail / "observations.json").read_bytes())
+        for record in tail_records:
+            offset = record["offset"]
+            step = official_step + offset
+            sample(record, tail / f"frame-{offset}.npz")
+        gripper_commands.extend([-1.0] * (step - official_step))
     np.savez_compressed(
         output / "frames.npz", steps=frames, images=images, gripper_qpos=gripper_qpos,
         gripper_commands=gripper_commands, image_hashes=image_hashes,
@@ -99,10 +111,11 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
     )
     frame_path.unlink()
     (output / "verified.json").write_text(json.dumps({
-        "source": source.name, "steps": step, "sampled_frames": len(frames),
+        "source": source.name, "steps": official_step, "sampled_frames": len(frames),
         "init_state_sha256": episode["init_state_sha256"], "bddl_sha256": episode["bddl_sha256"],
         "terminal_state_sha256": current["sim_state_sha256"], "official_success": episode["success"],
         "rgbd": rgbd,
+        **({"diagnostic_tail": tail_records} if tail_records else {}),
         "actions_sha256": sha256((source / "actions.jsonl").read_bytes()).hexdigest(),
         "frames_sha256": sha256((output / "frames.npz").read_bytes()).hexdigest(),
     }, indent=2) + "\n", encoding="utf-8")
@@ -145,9 +158,12 @@ if __name__ == "__main__":
     source.add_argument("--episode-dir", type=Path)
     parser.add_argument("--workers", type=int, choices=range(1, 11), default=8)
     parser.add_argument("--rgbd", action="store_true")
+    parser.add_argument("--release-tail", action="store_true")
     args = parser.parse_args()
+    if args.release_tail and (args.episode_dir is None or not args.rgbd):
+        parser.error("--release-tail requires --episode-dir and --rgbd")
     if args.episode_dir is not None:
-        replay(args.episode_dir, args.output, args.sim_python, args.roboenv, rgbd=args.rgbd)
+        replay(args.episode_dir, args.output, args.sim_python, args.roboenv, rgbd=args.rgbd, release_tail=args.release_tail)
     else:
         calibration = panel(args.run, scene_labels(), DEVELOPMENT, 2)
         replay_panel(calibration, args.output, args.sim_python, args.roboenv, args.workers, rgbd=args.rgbd)

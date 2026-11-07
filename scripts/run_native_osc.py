@@ -31,6 +31,7 @@ def simulate(
     output: Path, roboenv: Path, seed: int, init_index: int,
     socket_path: Path | None, steps: int, scene: int, video_path: Path | None = None,
     extra_views: tuple[str, ...] = (), extra_view_frame: int | None = None, rgbd: bool = False,
+    release_tail: bool = False,
 ) -> None:
     # Keep the response pipe separate from native library diagnostics.
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
@@ -61,7 +62,7 @@ def simulate(
             frame = np.concatenate([obs[key][::-1, ::-1] for key in CAMERAS.values()], axis=1)
             encoder.stdin.write(frame.tobytes())
 
-    def capture(obs, **metadata):
+    def capture(obs, *, destination=None, **metadata):
         arrays = dict(
             **{name: obs[key] for name, key in CAMERAS.items()},
             eef_pos=obs["robot0_eef_pos"],
@@ -83,7 +84,7 @@ def simulate(
                 sensors[f"{name}_intrinsic"] = get_camera_intrinsic_matrix(sim, camera, 256, 256)
                 sensors[f"{name}_extrinsic"] = get_camera_extrinsic_matrix(sim, camera)
         np.savez(
-            output / "observation.npz", **arrays, **sensors,
+            destination or output / "observation.npz", **arrays, **sensors,
             **{f"visual_{name}": view for name, view in extra.items()},
         )
         return {
@@ -161,6 +162,18 @@ def simulate(
             result = advance(actions)
             print(json.dumps(result, allow_nan=False), file=protocol)
             if result["success"] or result["done"]:
+                if release_tail and result["success"] and actions[result["executed"] - 1][-1] < -0.5:
+                    tail = output / "release-tail"
+                    tail.mkdir()
+                    diagnostics = []
+                    for offset in range(1, 21):
+                        obs, _, done, _ = env.step(np.asarray([0, 0, 0, 0, 0, 0, -1], dtype=np.float32))
+                        if offset % 5 == 0:
+                            diagnostics.append(capture(
+                                obs, destination=tail / f"frame-{offset}.npz", offset=offset,
+                                success=bool(env.check_success()), done=bool(done),
+                            ))
+                    (tail / "observations.json").write_text(json.dumps(diagnostics, indent=2) + "\n", encoding="utf-8")
                 break
     finally:
         try:
@@ -485,15 +498,18 @@ def main() -> None:
     parser.add_argument("--extra-view", action="append", choices=EXTRA_VIEWS, default=[], help=argparse.SUPPRESS)
     parser.add_argument("--extra-view-frame", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--rgbd", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--release-tail", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not 1 <= args.steps <= 520:
         parser.error("--steps must be between 1 and 520")
     if args.sim_worker:
         if args.video is not None and args.socket is not None:
             parser.error("video recording requires a standalone replay worker")
+        if args.release_tail and (not args.rgbd or args.socket is not None or args.video is not None):
+            parser.error("diagnostic release observations require a standalone RGB-D replay")
         simulate(
             args.output, args.roboenv, args.seed, args.init_index, args.socket, args.steps, args.scene,
-            args.video, tuple(dict.fromkeys(args.extra_view)), args.extra_view_frame, args.rgbd,
+            args.video, tuple(dict.fromkeys(args.extra_view)), args.extra_view_frame, args.rgbd, args.release_tail,
         )
         return
     if args.workspace is None or args.sim_python is None or args.socket is not None or args.video is not None:
