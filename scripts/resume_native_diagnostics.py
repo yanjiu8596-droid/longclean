@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datetime import datetime, timezone
 import json
 import os
@@ -33,9 +33,13 @@ def planned_blocks():
 def result_for(job, artifact, code, elapsed):
     tag, scene, seed, init, horizon = job
     path = artifact / "episode.json"
-    record = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        record = {}
     completed = (
         code == 0 and isinstance(record.get("success"), bool)
+        and isinstance(record.get("finished_at"), str)
         and record.get("terminal_reason") in {"simulator_success", "simulator_done", "step_budget"}
         and record.get("task_id") == f"libero/libero-10-{scene:02d}"
         and record.get("seed") == seed and record.get("init_state_index") == init
@@ -68,14 +72,19 @@ def run(args):
     summary_path = root / "summary.json"
     results_path = root / "results.jsonl"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    if summary["status"] != "stopped" or summary["phase"] != PHASE:
-        raise ValueError("the original direct sweep must first stop cleanly")
-    deadline = datetime.fromisoformat(summary["deadline_at"]).timestamp()
+    if summary["status"] not in {"stopped", "deadline_reached"} or summary["phase"] != PHASE:
+        raise ValueError("the previous direct sweep must first stop cleanly")
+    deadline_at = summary["deadline_at"]
+    if args.until_complete and deadline_at is not None:
+        summary["original_deadline_at"] = deadline_at
+        summary["deadline_at"] = deadline_at = None
+    deadline = datetime.fromisoformat(deadline_at).timestamp() if deadline_at else float("inf")
     if deadline - time.time() < 60:
         raise ValueError("too little time remains before the original deadline")
     rows = [json.loads(line) for line in results_path.read_text(encoding="utf-8").splitlines()]
     completed = {row["run"] for row in rows if row["completed"]}
     blocks = list(planned_blocks())
+    diagnostic_tags = {job[0] for block in blocks for job in block}
     active = {}
     concurrency = args.workers
     summary.update(status="running", pid=os.getpid(), resumed_at=datetime.now(timezone.utc).isoformat())
@@ -94,6 +103,7 @@ def run(args):
         summary.update(
             groups=dict(groups), episodes=len(completed), errors=sum(not row["completed"] for row in rows),
             completed_diagnostic_blocks=sum(all(job[0] in completed for job in block) for block in blocks),
+            diagnostics_completed=len(completed & diagnostic_tags), diagnostics_planned=len(diagnostic_tags),
             active_episode=next(iter(active), None), active_episodes=list(active), workers=concurrency,
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
@@ -136,17 +146,21 @@ def run(args):
 
     signal.signal(signal.SIGTERM, interrupted)
     # A worker can finish writing its evidence just before the old scheduler stops.
-    existing_artifacts = Counter(row.get("artifact", row["run"]) for row in rows)
+    existing_artifacts = {row.get("artifact", row["run"]) for row in rows}
     try:
         for block in blocks:
             for job in block:
                 tag = job[0]
-                artifact = root / tag
-                if tag not in completed and not existing_artifacts[tag] and (artifact / "episode.json").is_file():
+                if tag in completed:
+                    continue
+                for artifact in (root / tag, *sorted(root.glob(f"{tag}-retry[0-9]*"))):
+                    if artifact.name in existing_artifacts or not (artifact / "episode.json").is_file():
+                        continue
                     row = result_for(job, artifact, 0, 0)
                     if row["completed"]:
                         row["recovered_after_stop"] = True
                         record(row)
+                        break
         save()
         errors = 0
         for block in blocks:
@@ -168,6 +182,8 @@ def run(args):
                         errors = 0 if row["completed"] else errors + 1
                         if not row["completed"]:
                             concurrency = 1
+                            if deadline_at is None:
+                                pending.insert(0, job)
                         save()
                 if not active and (remaining < 60 or errors >= 3):
                     summary["status"] = "deadline_reached" if remaining < 60 else "stopped_after_repeated_runtime_errors"
@@ -194,4 +210,5 @@ if __name__ == "__main__":
     parser.add_argument("--roboenv", required=True, type=Path)
     parser.add_argument("--sim-python", required=True, type=Path)
     parser.add_argument("--workers", type=int, choices=(1, 2), default=2)
+    parser.add_argument("--until-complete", action="store_true", help="Finish all planned diagnostic items without a batch deadline.")
     run(parser.parse_args())
