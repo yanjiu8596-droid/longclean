@@ -27,7 +27,7 @@ from tableclear.config import expand_matrix, load_evaluation_config
 
 def jobs_for(phase):
     if phase == "smoke":
-        return [(1, 0, 15, "closed_loop_vla")]
+        return [(scene, 0, 15, "closed_loop_vla") for scene in SCENES]
     if phase == "pilot":
         conditions = [(scene, 0, init) for init in (15, 16, 17) for scene in SCENES]
     else:
@@ -99,6 +99,10 @@ def smoke_passed(row):
         and audit.get("invalid_completions", 0) == 0
         and audit["confirmed_positives"] > 0 and row["visual_switches"] > 0
     )
+
+
+def safe_visual_audit(audit):
+    return not (audit["false_positives"] or audit["unparsed"] or audit.get("invalid_completions", 0))
 
 
 def paired(rows, count):
@@ -243,16 +247,16 @@ def run(args):
     signal.signal(signal.SIGTERM, interrupted)
     try:
         smoke, complete = phase("smoke")
-        if not complete or not smoke_passed(smoke[0]):
+        if not complete or not all(safe_visual_audit(row["visual"]) for row in smoke) or not any(map(smoke_passed, smoke)):
             summary["status"] = "smoke_gate_failed"
             return
         # Add headroom for the CUDA context, EGL and non-PyTorch allocations.
-        visual_peak_mib = (smoke[0].get("cuda_peak_reserved_mib") or args.gpu_budget_mib) + 1024
+        visual_peak_mib = max(row.get("cuda_peak_reserved_mib") or args.gpu_budget_mib for row in smoke) + 1024
         pilot, complete = phase("pilot", visual_peak_mib)
         audits = [row["visual"] for row in pilot if "visual" in row]
         if (
             not complete or not paired(pilot, 9)
-            or any(audit["false_positives"] or audit["unparsed"] or audit.get("invalid_completions", 0) for audit in audits)
+            or not all(map(safe_visual_audit, audits))
             or not any(row.get("visual_switches") for row in pilot)
         ):
             summary["status"] = "pilot_gate_failed"

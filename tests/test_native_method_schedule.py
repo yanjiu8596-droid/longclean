@@ -132,6 +132,7 @@ class NativeMethodScheduleTests(unittest.TestCase):
         self.assertEqual(len({job[:3] for job in formal}), 45)
         self.assertEqual({job[2] for job in formal}, set(range(15)))
         self.assertTrue(all(job[2] >= 15 for job in jobs_for("pilot")))
+        self.assertEqual({job[:3] for job in jobs_for("smoke")}, {(1, 0, 15), (2, 0, 15), (8, 0, 15)})
 
     def test_failed_visual_gate_can_only_be_used_in_a_runtime_probe(self):
         project = Path(__file__).resolve().parents[1]
