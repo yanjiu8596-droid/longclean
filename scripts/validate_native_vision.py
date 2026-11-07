@@ -98,9 +98,12 @@ def run(args) -> None:
         "project_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True).strip(),
         "calibration": {}, "gate_passed": False,
     }
-    models = [("smolvlm2_500m_video_instruct", args.smol, ("original", "external", "dual"))]
-    if args.qwen is not None:
-        models.append(("qwen2_5_vl_3b_instruct", args.qwen, ("external", "dual")))
+    if args.grounded:
+        models = [("qwen2_5_vl_3b_instruct", args.qwen, ("appearance", "basket_zoom"))]
+    else:
+        models = [("smolvlm2_500m_video_instruct", args.smol, ("original", "external", "dual"))]
+        if args.qwen is not None:
+            models.append(("qwen2_5_vl_3b_instruct", args.qwen, ("external", "dual")))
 
     def save():
         path = args.output / "visual-validation.json"
@@ -144,4 +147,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("run", "output", "smol", "qwen"):
         parser.add_argument(f"--{name}", type=Path, required=name != "qwen")
-    run(parser.parse_args())
+    parser.add_argument("--grounded", action="store_true")
+    args = parser.parse_args()
+    if args.grounded and args.qwen is None:
+        parser.error("--grounded requires --qwen")
+    run(args)

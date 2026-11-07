@@ -21,6 +21,12 @@ LOCATION_WORDS = {
     "gripper": VerdictStatus.GRASPED,
     "unknown": VerdictStatus.UNKNOWN,
 }
+OBJECT_APPEARANCE = {
+    "alphabet soup can": "short cylindrical can with a blue and yellow label and a silver lid",
+    "tomato sauce": "short cylindrical can with red bands and a green stripe on its label",
+    "cream cheese box": "small flat light-blue and white rectangular carton",
+    "butter": "small thin orange-red and yellow rectangular carton",
+}
 
 
 class VisualPlanner:
@@ -60,7 +66,27 @@ class VisualPlanner:
             "4 = not visible or cannot tell. Use 4 if unsure."
         )
         statuses = STATUSES
-        if self.strategy != "original":
+        if self.strategy in {"appearance", "basket_zoom"}:
+            appearance = OBJECT_APPEARANCE[label]
+            images = images[:1]
+            if self.strategy == "basket_zoom":
+                from PIL import Image
+
+                view = images[0]
+                # The external camera is fixed in these three tasks.
+                box = tuple(round(value * dimension / 256) for value, dimension in zip(
+                    (0, 80, 82, 202), (*view.size, *view.size),
+                ))
+                closeup = view.crop(box).resize((336, 504), Image.Resampling.BICUBIC)
+                images.append(closeup)
+            question = (
+                f"Find the {appearance}. The white-lined wicker basket is on the far left of the first image. "
+                + ("The second image enlarges the basket. " if self.strategy == "basket_zoom" else "")
+                + "Where is the named item? Use 1 for inside the white-lined basket, 2 for outside the basket "
+                "on the brown worktop, 3 for held between the robot fingers, or 4 for fully hidden. "
+                "Answer with one digit."
+            )
+        elif self.strategy != "original":
             if self.strategy == "external":
                 images = images[:1]
             elif self.strategy != "dual":
