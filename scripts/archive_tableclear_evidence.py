@@ -73,7 +73,11 @@ def archive(run: Path, output: Path, *, final: bool, replays: Path | None) -> di
             path = run / name / "episode.json"
             if path.is_file():
                 episode = json.loads(path.read_bytes())
-                keys = ("project_commit", "bddl_sha256", "vla_calls", "visual_calls", "started_at", "finished_at", "control_hz")
+                keys = (
+                    "project_commit", "bddl_sha256", "model", "controller", "control_hz",
+                    "settle_frames", "step_budget", "chunk_horizon", "vla_calls", "visual_calls",
+                    "started_at", "finished_at",
+                )
                 episode_metrics.append(json.dumps({"run": row["run"], **{key: episode.get(key) for key in keys}}) + "\n")
         add("index/episode-metrics.jsonl", "".join(episode_metrics).encode())
         for name in ("concurrency-cutover.json", "completion-cutover.json", "scaling-cutover.json"):

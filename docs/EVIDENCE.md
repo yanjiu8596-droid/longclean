@@ -10,6 +10,12 @@ fewest executed steps, breaking ties by run ID. Use `--final` after the batch
 stops to select from the completed results. The archive manifest identifies the
 selected runs, capture time and SHA-256 digest of each archived file.
 
+Keep the compact per-episode metrics alongside the full result index. Together
+they record the pairing key and initial-state hash, frozen model and control
+configuration, available and executed action steps, model calls, timing, and
+simulator verdict. The selected videos illustrate individual outcomes. Success
+rates come from the result index across matched conditions.
+
 ```bash
 python scripts/archive_tableclear_evidence.py --run RUN_DIRECTORY --output SNAPSHOT.zip
 python scripts/archive_tableclear_evidence.py --run RUN_DIRECTORY --output FINAL.zip --final --replays REPLAY_ROOT
@@ -37,6 +43,12 @@ Regenerate the diagnostic statistics directly from the archive. The report uses
 only conditions with all four horizons present and matching initial-state
 hashes. It reports success counts, paired changes against 50 steps and step
 differences on cases where both horizons succeeded.
+
+Record model calls as well as simulator steps because shorter action chunks
+request observations and inference more often. Save throughput samples with
+their workload and concurrency. Use identical workloads for controlled speed
+comparisons. Before comparing high-level methods, verify the same effective
+action budget and chunk length in the actual episode runner.
 
 ```bash
 python scripts/summarize_horizon_diagnostics.py --archive FINAL.zip --output-dir EVIDENCE_DIRECTORY
