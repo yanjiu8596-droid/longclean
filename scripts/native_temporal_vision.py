@@ -8,7 +8,7 @@ from native_visual import OBJECT_APPEARANCE, STATUSES
 from tableclear.models import VerdictStatus
 
 
-TEMPORAL_STRATEGIES = ("temporal_release", "temporal_hybrid")
+TEMPORAL_STRATEGIES = ("temporal_identity", "temporal_veto")
 
 
 @dataclass
@@ -59,6 +59,7 @@ class TemporalVision:
         self.commands: list[float] = []
         self.static = {}
         self.events = {}
+        self.identities = {}
 
     def observe(self, step: int, images: list, commands: list[float], hashes: list[str]) -> None:
         if step != len(self.commands) + len(commands) or self.frames and step <= self.frames[-1].step:
@@ -116,6 +117,39 @@ class TemporalVision:
         current = self.frames[-1]
         return basket_difference(self.frames[0], current) < 60 and basket_difference(confirmed, current) < 25
 
+    def identify_at(self, planner, released, before, after):
+        from PIL import Image, ImageDraw
+
+        if released in self.identities:
+            return self.identities[released], 0
+        labels = list(OBJECT_APPEARANCE)
+        examples = Image.new("RGB", (512, 148), "white")
+        draw = ImageDraw.Draw(examples)
+        for index, label in enumerate(labels):
+            examples.paste(planner.references[label].resize((128, 128)), (index * 128, 20))
+            draw.text((index * 128 + 4, 3), str(index + 1), fill="black")
+        # The fixed external camera covers the gripper and basket in this crop.
+        before_crop, after_crop = (
+            frame.images[0].crop((0, 48, 100, 201)).resize((300, 459), Image.Resampling.BICUBIC)
+            for frame in (before, after)
+        )
+        prompt = (
+            "Image 1 shows four numbered reference packages. Images 2 and 3 show the same basket before "
+            "and after the robot opened its fingers. Image 4 is the wrist camera just before opening. "
+            "Which exact package is being released here? Match the label colors and shape of the item "
+            "that moved from the gripper. Ignore packages that were already lying still in the basket. "
+            "1 is the blue/yellow cylindrical soup can, 2 is the red/green cylindrical tomato sauce can, "
+            "3 is the blue/white rectangular cream cheese box, 4 is the orange-red butter carton. "
+            "Answer 5 if the released object is a different item, is hidden, or cannot be identified. "
+            "Reply with one digit."
+        )
+        raw = planner.answer([examples, before_crop, after_crop, before.images[1]], prompt)
+        token = raw.strip(". \n\t")
+        match = {str(index + 1): label for index, label in enumerate(labels)}
+        result = {"raw": raw, "label": match.get(token), "parsed": token in (*match, "5")}
+        self.identities[released] = result
+        return result, 1
+
     def inspect(self, planner, target_id: str, label: str, strategy: str, *, invalidated_through: int = -1) -> dict:
         current = self.frames[-1]
         current_vote, calls = self.static_at(planner, current, target_id, label)
@@ -141,26 +175,23 @@ class TemporalVision:
                 delta = basket_difference(after, current)
                 evidence.append({**event, "wall_difference_to_current": delta, "wrist_lining_fraction": visible_lining})
                 if event["status"] == "in_basket" and delta < 25:
-                    accepted = after.step
-                    break
+                    identity, count = self.identify_at(planner, released, before, after)
+                    calls += count
+                    evidence[-1]["identity"] = identity
+                    if identity["parsed"] and (
+                        identity["label"] == label or identity["label"] is None and strategy == "temporal_veto"
+                    ):
+                        accepted = after.step
+                        break
             if accepted is not None:
                 status, reason = "in_basket", "visible_after_release"
-            elif status == "in_basket" and strategy == "temporal_hybrid" and len(self.frames) > 1:
-                previous = self.frames[-2]
-                prior_vote, count = self.static_at(planner, previous, target_id, label)
-                calls += count
-                evidence.append(prior_vote)
-                if (
-                    prior_vote["status"] == "in_basket" and previous.step > invalidated_through
-                    and basket_difference(previous, current) < 25
-                ):
-                    accepted = current.step
-                    reason = "consistent_recent_views"
         if status == "in_basket" and accepted is None:
             status, reason = "unknown", "basket_moved" if initial_delta >= 60 else "placement_unconfirmed"
         return {
             "target_id": target_id, "target": label, "status": status, "inferences": calls,
-            "parsed": current_vote["parsed"] and all(item["parsed"] for item in evidence),
+            "parsed": current_vote["parsed"] and all(
+                item["parsed"] and item.get("identity", {}).get("parsed", True) for item in evidence
+            ),
             "raw": reason, "current": current_vote, "history": evidence,
             "initial_wall_difference": initial_delta, "confirmed_frame": accepted,
         }
