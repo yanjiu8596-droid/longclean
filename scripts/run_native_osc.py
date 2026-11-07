@@ -30,7 +30,7 @@ def validate_actions(actions: object) -> None:
 def simulate(
     output: Path, roboenv: Path, seed: int, init_index: int,
     socket_path: Path | None, steps: int, scene: int, video_path: Path | None = None,
-    extra_views: tuple[str, ...] = (), extra_view_frame: int | None = None,
+    extra_views: tuple[str, ...] = (), extra_view_frame: int | None = None, rgbd: bool = False,
 ) -> None:
     # Keep the response pipe separate from native library diagnostics.
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
@@ -45,6 +45,7 @@ def simulate(
     from libero.libero import get_libero_path
     from libero.libero.benchmark import get_benchmark_dict
     from libero.libero.envs.env_wrapper import OffScreenRenderEnv
+    from robosuite.utils.camera_utils import get_camera_extrinsic_matrix, get_camera_intrinsic_matrix, get_real_depth_map
 
     suite = get_benchmark_dict()["libero_10"](task_order_index=0)
     task = suite.get_task(scene - 1)
@@ -73,7 +74,18 @@ def simulate(
                 name: env.env.sim.render(camera_name=name, width=512, height=512)[::-1].copy()
                 for name in extra_views
             }
-        np.savez(output / "observation.npz", **arrays, **{f"visual_{name}": view for name, view in extra.items()})
+        sensors = {}
+        if rgbd:
+            sim = env.env.sim
+            for name, key in CAMERAS.items():
+                camera = key.removesuffix("_image")
+                sensors[f"{name}_depth"] = get_real_depth_map(sim, obs[f"{camera}_depth"]).squeeze(-1)
+                sensors[f"{name}_intrinsic"] = get_camera_intrinsic_matrix(sim, camera, 256, 256)
+                sensors[f"{name}_extrinsic"] = get_camera_extrinsic_matrix(sim, camera)
+        np.savez(
+            output / "observation.npz", **arrays, **sensors,
+            **{f"visual_{name}": view for name, view in extra.items()},
+        )
         return {
             **metadata,
             "sim_time": float(env.env.sim.data.time),
@@ -99,6 +111,7 @@ def simulate(
 
     env = OffScreenRenderEnv(
         bddl_file_name=str(bddl), camera_heights=256, camera_widths=256, control_freq=20,
+        camera_depths=rgbd,
     )
     try:
         env.reset()
@@ -454,6 +467,7 @@ def main() -> None:
     parser.add_argument("--video", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--extra-view", action="append", choices=EXTRA_VIEWS, default=[], help=argparse.SUPPRESS)
     parser.add_argument("--extra-view-frame", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--rgbd", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if not 1 <= args.steps <= 520:
         parser.error("--steps must be between 1 and 520")
@@ -462,7 +476,7 @@ def main() -> None:
             parser.error("video recording requires a standalone replay worker")
         simulate(
             args.output, args.roboenv, args.seed, args.init_index, args.socket, args.steps, args.scene,
-            args.video, tuple(dict.fromkeys(args.extra_view)), args.extra_view_frame,
+            args.video, tuple(dict.fromkeys(args.extra_view)), args.extra_view_frame, args.rgbd,
         )
         return
     if args.workspace is None or args.sim_python is None or args.socket is not None or args.video is not None:

@@ -19,7 +19,7 @@ DEVELOPMENT = range(19, 40)
 HOLDOUT = range(40, 50)
 
 
-def replay(source: Path, output: Path, sim_python: Path, roboenv: Path) -> None:
+def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd: bool = False) -> None:
     import numpy as np
 
     episode = json.loads((source / "episode.json").read_bytes())
@@ -32,8 +32,11 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path) -> None:
         "--output", str(output), "--roboenv", str(roboenv), "--scene", episode["task_id"].rsplit("-", 1)[1],
         "--seed", str(episode["seed"]), "--init-index", str(episode["init_state_index"]),
     ]
+    if rgbd:
+        command.append("--rgbd")
     frame_path = output / "observation.npz"
     frames, images, gripper_qpos, gripper_commands, image_hashes = [], [], [], [], []
+    depths, intrinsics, extrinsics, eef_positions = [], [], [], []
 
     def verify(actual, expected, fields):
         if any(actual[field] != expected[field] for field in fields):
@@ -51,6 +54,11 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path) -> None:
             images.append([raw[camera][::-1, ::-1].copy() for camera in CAMERAS])
             gripper_qpos.append(raw["gripper_qpos"])
             image_hashes.append([metadata["observation_sha256"][camera] for camera in CAMERAS])
+            if rgbd:
+                depths.append([raw[f"{camera}_depth"][::-1, ::-1].copy() for camera in CAMERAS])
+                intrinsics.append([raw[f"{camera}_intrinsic"] for camera in CAMERAS])
+                extrinsics.append([raw[f"{camera}_extrinsic"] for camera in CAMERAS])
+                eef_positions.append(raw["eef_pos"])
 
     step = 0
     with (output / "simulator.log").open("w", encoding="utf-8") as log:
@@ -87,30 +95,35 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path) -> None:
     np.savez_compressed(
         output / "frames.npz", steps=frames, images=images, gripper_qpos=gripper_qpos,
         gripper_commands=gripper_commands, image_hashes=image_hashes,
+        **(dict(depths=depths, intrinsics=intrinsics, extrinsics=extrinsics, eef_positions=eef_positions) if rgbd else {}),
     )
     frame_path.unlink()
     (output / "verified.json").write_text(json.dumps({
         "source": source.name, "steps": step, "sampled_frames": len(frames),
         "init_state_sha256": episode["init_state_sha256"], "bddl_sha256": episode["bddl_sha256"],
         "terminal_state_sha256": current["sim_state_sha256"], "official_success": episode["success"],
+        "rgbd": rgbd,
         "actions_sha256": sha256((source / "actions.jsonl").read_bytes()).hexdigest(),
         "frames_sha256": sha256((output / "frames.npz").read_bytes()).hexdigest(),
     }, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"replayed": source.name, "sampled_frames": len(frames)}), flush=True)
 
 
-def replay_panel(cases, output: Path, sim_python: Path, roboenv: Path, workers: int) -> None:
+def replay_panel(cases, output: Path, sim_python: Path, roboenv: Path, workers: int, *, rgbd: bool = False) -> None:
     sources = {folder.name: folder for samples in cases.values() for _, folder in samples.values()}
     output.mkdir(parents=True, exist_ok=True)
 
     def run(folder):
         destination = output / folder.name
         if (destination / "verified.json").is_file():
+            previous = json.loads((destination / "verified.json").read_bytes())
+            if bool(previous.get("rgbd")) != rgbd:
+                raise ValueError(f"replay observation mode differs: {destination}")
             return
         staging = destination.with_name(destination.name + ".partial")
         while staging.exists():
             staging = staging.with_suffix(staging.suffix + "-retry")
-        replay(folder, staging, sim_python, roboenv)
+        replay(folder, staging, sim_python, roboenv, rgbd=rgbd)
         staging.rename(destination)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -125,9 +138,16 @@ def scene_labels() -> dict:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("run", "output", "sim-python", "roboenv"):
+    for name in ("output", "sim-python", "roboenv"):
         parser.add_argument(f"--{name}", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--run", type=Path)
+    source.add_argument("--episode-dir", type=Path)
     parser.add_argument("--workers", type=int, choices=range(1, 11), default=8)
+    parser.add_argument("--rgbd", action="store_true")
     args = parser.parse_args()
-    calibration = panel(args.run, scene_labels(), DEVELOPMENT, 2)
-    replay_panel(calibration, args.output, args.sim_python, args.roboenv, args.workers)
+    if args.episode_dir is not None:
+        replay(args.episode_dir, args.output, args.sim_python, args.roboenv, rgbd=args.rgbd)
+    else:
+        calibration = panel(args.run, scene_labels(), DEVELOPMENT, 2)
+        replay_panel(calibration, args.output, args.sim_python, args.roboenv, args.workers, rgbd=args.rgbd)
