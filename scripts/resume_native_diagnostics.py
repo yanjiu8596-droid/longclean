@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 import json
 import os
@@ -18,6 +18,7 @@ from run_overnight_native import EPISODE_SCRIPT, HORIZONS, SCENES
 
 PHASE = "direct_horizon_diagnostics"
 METHOD = "direct_vla"
+MAX_WORKERS = 8
 
 
 def planned_blocks():
@@ -87,6 +88,8 @@ def run(args):
     diagnostic_tags = {job[0] for block in blocks for job in block}
     active = {}
     concurrency = args.workers
+    requested_workers = concurrency
+    worker_limit_path = root / "worker-limit.txt"
     summary.update(status="running", pid=os.getpid(), resumed_at=datetime.now(timezone.utc).isoformat())
     summary["scheduler_commit"] = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=EPISODE_SCRIPT.parent, text=True,
@@ -105,6 +108,7 @@ def run(args):
             completed_diagnostic_blocks=sum(all(job[0] in completed for job in block) for block in blocks),
             diagnostics_completed=len(completed & diagnostic_tags), diagnostics_planned=len(diagnostic_tags),
             active_episode=next(iter(active), None), active_episodes=list(active), workers=concurrency,
+            requested_workers=requested_workers,
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
         tmp = summary_path.with_suffix(".tmp")
@@ -138,7 +142,7 @@ def run(args):
         ]
         with log.open("x", encoding="utf-8") as handle:
             process = subprocess.Popen(command, stdout=handle, stderr=subprocess.STDOUT, start_new_session=True)
-        active[tag] = (process, job, artifact, time.monotonic())
+        active[tag] = (process, job, artifact, time.monotonic(), concurrency)
         save()
 
     def interrupted(_signal, _frame):
@@ -163,33 +167,41 @@ def run(args):
                         break
         save()
         errors = 0
-        for block in blocks:
-            pending = [job for job in block if job[0] not in completed]
-            while pending or active:
-                remaining = deadline - time.time()
-                while pending and len(active) < concurrency and remaining >= 60 and errors < 3:
-                    launch(pending.pop(0))
-                for tag, (process, job, artifact, start) in list(active.items()):
-                    code = process.poll()
-                    elapsed = time.monotonic() - start
-                    if code is None and (elapsed >= 360 or remaining <= 5):
-                        stop(process)
-                        code = 124
-                    if code is not None:
-                        del active[tag]
-                        row = result_for(job, artifact, code, elapsed)
-                        record(row)
-                        errors = 0 if row["completed"] else errors + 1
-                        if not row["completed"]:
-                            concurrency = 1
-                            if deadline_at is None:
-                                pending.insert(0, job)
-                        save()
-                if not active and (remaining < 60 or errors >= 3):
-                    summary["status"] = "deadline_reached" if remaining < 60 else "stopped_after_repeated_runtime_errors"
-                    return
-                if active:
-                    time.sleep(0.2)
+        pending = deque(job for block in blocks for job in block if job[0] not in completed)
+        while pending or active:
+            try:
+                limit = int(worker_limit_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, ValueError):
+                limit = requested_workers
+            if 1 <= limit <= MAX_WORKERS and limit != requested_workers:
+                requested_workers = concurrency = limit
+                save()
+
+            remaining = deadline - time.time()
+            while pending and len(active) < concurrency and remaining >= 60 and errors < 3:
+                launch(pending.popleft())
+            for tag, (process, job, artifact, start, limit_at_launch) in list(active.items()):
+                code = process.poll()
+                elapsed = time.monotonic() - start
+                if code is None and (elapsed >= 360 or remaining <= 5):
+                    stop(process)
+                    code = 124
+                if code is not None:
+                    del active[tag]
+                    row = result_for(job, artifact, code, elapsed)
+                    row["workers_at_launch"] = limit_at_launch
+                    record(row)
+                    errors = 0 if row["completed"] else errors + 1
+                    if not row["completed"]:
+                        concurrency = 1
+                        if deadline_at is None:
+                            pending.appendleft(job)
+                    save()
+            if not active and (remaining < 60 or errors >= 3):
+                summary["status"] = "deadline_reached" if remaining < 60 else "stopped_after_repeated_runtime_errors"
+                return
+            if active:
+                time.sleep(0.2)
         summary["status"] = "plan_completed"
     except KeyboardInterrupt:
         summary["status"] = "stopped"
@@ -209,6 +221,6 @@ if __name__ == "__main__":
     parser.add_argument("--workspace", required=True, type=Path)
     parser.add_argument("--roboenv", required=True, type=Path)
     parser.add_argument("--sim-python", required=True, type=Path)
-    parser.add_argument("--workers", type=int, choices=(1, 2), default=2)
+    parser.add_argument("--workers", type=int, choices=range(1, MAX_WORKERS + 1), default=2)
     parser.add_argument("--until-complete", action="store_true", help="Finish all planned diagnostic items without a batch deadline.")
     run(parser.parse_args())
