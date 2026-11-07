@@ -8,12 +8,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from native_method_schedule import MethodSchedule, accepted_visual_provider
 from native_temporal_vision import TemporalVision, release_steps
+from native_rgbd_placement import has_deposit
 from native_visual import VisualPlanner
 from run_native_methods import jobs_for
 from tableclear.state import TaskState
 
 
 class NativeMethodScheduleTests(unittest.TestCase):
+    def test_uncolored_depth_change_cannot_confirm_a_shifted_basket(self):
+        evidence = {"fixed_foreground_pixels": 259, "target_color_pixels": [[0, 0], [0, 0]]}
+        self.assertFalse(has_deposit(evidence, upright=False))
+        self.assertTrue(has_deposit(evidence, upright=True))
+
     def test_release_detection_requires_sustained_close_and_open(self):
         commands = [-1, -1, 1, -1, 1, 1, 1, -1, -1, 1, -1, -1, -1, -1, 1, 1, 1, -1, -1, -1]
         self.assertEqual(release_steps(commands), [11, 18])

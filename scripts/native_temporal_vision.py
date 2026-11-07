@@ -127,36 +127,67 @@ class TemporalVision:
         current = self.frames[-1]
         return basket_difference(self.frames[0], current) < 60 and basket_difference(confirmed, current) < 25
 
-    def depth_event(self, planner, label, released, before, after, current):
+    def grasp_view(self, released, before):
+        prior_release = max((step for step in release_steps(self.commands) if step < released), default=0)
+        full_width = self.frames[0].gripper_width
+        return next((
+            frame for frame in reversed(self.frames)
+            if prior_release < frame.step <= before.step
+            and 0.018 < frame.gripper_width < 0.94 * full_width
+            and frame.geometry["eef"][1] < 0.17 and frame.geometry["eef"][2] > 0.51
+        ), before)
+
+    def depth_event(self, planner, target_id, label, released, before, after, current, use_static):
         observations = []
         eligible = [
             frame for frame in self.frames
             if after.step <= frame.step <= released + 36 and frame.gripper_width >= 0.8 * self.frames[0].gripper_width
         ]
         confirmed = None
+        calls = 0
+        stable_frames = []
         for frame in eligible:
             evidence = geometry_evidence(before, frame, label)
             if evidence is None:
                 break
             stable = basket_difference(frame, current) < 25
+            upright = basket_difference(self.frames[0], frame) < 22 and basket_difference(before, frame) < 22
             observations.append({
-                "frame": frame.step, "basket_stable": stable, "image_sha256": frame.hashes, **evidence,
+                "frame": frame.step, "basket_stable": stable, "basket_upright": upright,
+                "image_sha256": frame.hashes, **evidence,
             })
-            if stable and has_deposit(evidence):
+            if stable and upright:
+                stable_frames.append(frame)
+            if stable and has_deposit(evidence, upright=upright):
                 confirmed = frame.step
                 break
-        calls = 0
         identity = self.held_identities.get(released)
-        if confirmed is not None and identity is None:
-            identity, calls = held_identity(planner, before)
+        if (confirmed is not None or use_static and len(stable_frames) >= 2) and identity is None:
+            view = self.grasp_view(released, before)
+            identity, count = held_identity(planner, view)
+            calls += count
+            if identity["label"] is None and view.step != before.step:
+                view = before
+                identity, count = held_identity(planner, view)
+                calls += count
+            identity = {**identity, "frame": view.step, "image_sha256": view.hashes}
             self.held_identities[released] = identity
         if identity is None or identity["label"] != label or not identity["parsed"]:
             confirmed = None
+        corroboration = []
+        if confirmed is None and use_static and identity is not None and identity["label"] == label:
+            for frame in stable_frames:
+                verdict, count = self.static_at(planner, frame, target_id, label)
+                calls += count
+                corroboration.append(verdict)
+                if sum(item["status"] == "in_basket" and item["parsed"] for item in corroboration) >= 2:
+                    confirmed = frame.step
+                    break
         return {
             "release_step": released, "before": before.step, "after": after.step, "confirmed": confirmed,
             "status": "in_basket" if confirmed is not None else "unknown",
             "parsed": identity is None or identity["parsed"], "depth_evidence": observations,
-            "held_identity": identity,
+            "held_identity": identity, "corroboration": corroboration,
         }, calls
 
     def identify_at(self, planner, released, before, after, strategy):
@@ -226,7 +257,10 @@ class TemporalVision:
                 if after.step <= invalidated_through:
                     break
                 if strategy in RGBD_STRATEGIES:
-                    depth, count = self.depth_event(planner, label, released, before, after, current)
+                    depth, count = self.depth_event(
+                        planner, target_id, label, released, before, after, current,
+                        use_static=strategy == "rgbd_hybrid" and status == "in_basket",
+                    )
                     calls += count
                     evidence.append(depth)
                     if depth["confirmed"] is not None:

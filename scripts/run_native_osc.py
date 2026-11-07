@@ -91,6 +91,7 @@ def simulate(
             "sim_time": float(env.env.sim.data.time),
             "sim_state_sha256": hashlib.sha256(env.get_sim_state().tobytes()).hexdigest(),
             "observation_sha256": {name: hashlib.sha256(a.tobytes()).hexdigest() for name, a in arrays.items()},
+            **({"geometry_sha256": {name: hashlib.sha256(a.tobytes()).hexdigest() for name, a in sensors.items()}} if sensors else {}),
             **({"extra_view_sha256": {name: hashlib.sha256(a.tobytes()).hexdigest() for name, a in extra.items()}} if extra else {}),
             "audit_goals": [
                 {"predicate": goal, "satisfied": bool(env.env._eval_predicate(goal))}
@@ -213,6 +214,7 @@ def episode(args: argparse.Namespace) -> dict:
     visual_provider = None
     visual_path = None
     supplemental_camera = None
+    use_rgbd = False
     history = None
     confirmed_frames = {}
     invalidated_through = {}
@@ -220,6 +222,7 @@ def episode(args: argparse.Namespace) -> dict:
     if scheduled_methods and args.visual_validation is not None:
         sys.path.insert(0, str(PROJECT / "src"))
         from native_method_schedule import accepted_visual_provider
+        from native_rgbd_placement import RGBD_STRATEGIES
 
         visual_path, visual_provider = accepted_visual_provider(
             args.visual_validation, PROJECT, args.workspace, runtime_probe=args.vision_runtime_probe,
@@ -227,8 +230,12 @@ def episode(args: argparse.Namespace) -> dict:
         supplemental_camera = visual_provider["supplemental_camera"]
         if supplemental_camera:
             worker_command.extend(("--extra-view", supplemental_camera))
+        use_rgbd = visual_provider["strategy"] in RGBD_STRATEGIES
+        if use_rgbd:
+            worker_command.append("--rgbd")
     if scheduled_methods:
         record["supplemental_camera"] = supplemental_camera
+        record["rgbd"] = use_rgbd
 
     def read_observation(instruction, image_label=None):
         with np.load(output / "observation.npz", allow_pickle=False) as obs:
@@ -242,9 +249,17 @@ def episode(args: argparse.Namespace) -> dict:
                 "gripper": {"qpos": torch.from_numpy(obs["gripper_qpos"]).unsqueeze(0)},
             }
             supplemental = obs[f"visual_{supplemental_camera}"] if supplemental_camera else None
+            geometry = {
+                "depths": [obs[f"{name}_depth"][::-1, ::-1].copy() for name in CAMERAS],
+                "intrinsics": [obs[f"{name}_intrinsic"] for name in CAMERAS],
+                "extrinsics": [obs[f"{name}_extrinsic"] for name in CAMERAS],
+                "eef": obs["eef_pos"],
+            } if use_rgbd and args.method == "closed_loop_vla" else None
         batch = processor.observation(batch)
         if supplemental is not None:
             batch["visual_rgb"] = supplemental
+        if geometry is not None:
+            batch["visual_geometry"] = geometry
         if image_label:
             for name in CAMERAS:
                 rgb = batch[f"observation.images.{name}"][0].permute(1, 2, 0)
@@ -267,6 +282,7 @@ def episode(args: argparse.Namespace) -> dict:
                 log.write(json.dumps({
                     **observation, "stage": stage, "frame": record["steps"],
                     "audit_goals": simulator["audit_goals"],
+                    **({"geometry_sha256": simulator["geometry_sha256"]} if use_rgbd else {}),
                     **({"extra_view_sha256": simulator["extra_view_sha256"]} if supplemental_camera else {}),
                 }) + "\n")
 
@@ -275,6 +291,7 @@ def episode(args: argparse.Namespace) -> dict:
             record["steps"], planner.image_views(observation), commands,
             [simulator["observation_sha256"][name] for name in CAMERAS],
             observation["observation.state"][0, -2:].tolist(),
+            observation.get("visual_geometry"),
         )
 
     def inspect_target(observation, target_id):
@@ -334,7 +351,7 @@ def episode(args: argparse.Namespace) -> dict:
                                 references=load_references(args.visual_validation.parent, references) if references else None,
                             )
                             record["vision"] = visual_provider
-                            if planner.strategy in TEMPORAL_STRATEGIES:
+                            if planner.strategy in (*TEMPORAL_STRATEGIES, *RGBD_STRATEGIES):
                                 history = TemporalVision()
                                 observe_history(obs, initial, [])
                             record_visual(planner.inventory(obs, inspect=inspect_target), initial, "inventory")
@@ -378,7 +395,7 @@ def episode(args: argparse.Namespace) -> dict:
                         record["chunk_horizon"] = horizon
                     if schedule is None:
                         count = min(horizon, args.steps - record["steps"])
-                    policy_obs = {key: value for key, value in obs.items() if key != "visual_rgb"}
+                    policy_obs = {key: value for key, value in obs.items() if key not in ("visual_rgb", "visual_geometry")}
                     actions = predict_chunk(service, {**policy_obs, "task": instruction})[:count]
                     worker.stdin.write(json.dumps(actions, allow_nan=False) + "\n")
                     worker.stdin.flush()

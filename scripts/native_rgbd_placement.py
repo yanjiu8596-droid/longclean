@@ -119,6 +119,8 @@ def geometry_evidence(before, after, label):
     return {"fixed_foreground_pixels": foreground, "target_color_pixels": colors}
 
 
-def has_deposit(evidence):
+def has_deposit(evidence, *, upright):
     before, after = evidence["target_color_pixels"]
-    return evidence["fixed_foreground_pixels"] >= 45 or any(new - old >= 45 for old, new in zip(before, after, strict=True))
+    return upright and evidence["fixed_foreground_pixels"] >= 45 or any(
+        new - old >= 45 for old, new in zip(before, after, strict=True)
+    )

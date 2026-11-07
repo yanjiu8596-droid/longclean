@@ -15,7 +15,7 @@ from replay_native_video import replay
 from run_native_methods import METHODS, jobs_for, read_jsonl
 
 
-CONDITION_FIELDS = ("init_state_sha256", "bddl_sha256", "model", "step_budget", "chunk_horizon", "supplemental_camera")
+CONDITION_FIELDS = ("init_state_sha256", "bddl_sha256", "model", "step_budget", "chunk_horizon", "supplemental_camera", "rgbd")
 
 
 def summarize(rows):
