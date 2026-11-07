@@ -124,3 +124,12 @@ def has_deposit(evidence, *, upright):
     return upright and evidence["fixed_foreground_pixels"] >= 45 or any(
         new - old >= 45 for old, new in zip(before, after, strict=True)
     )
+
+
+def wall_still_visible(reference, current):
+    import numpy as np
+
+    wall = np.s_[156:193, :52]
+    difference = current.geometry["depths"][0][wall] - reference.geometry["depths"][0][wall]
+    # A nearer foreground can occlude the wall, but visible depths must still match.
+    return float((np.abs(difference) <= 0.010).mean()) >= 0.35 and float((difference > 0.015).mean()) < 0.35

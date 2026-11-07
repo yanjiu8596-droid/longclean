@@ -33,6 +33,15 @@ class NativeMethodScheduleTests(unittest.TestCase):
         history.observe(30, [], [-1] * 10, [], [0.039, -0.039])
         self.assertEqual([(command, before.step, after.step) for command, before, after in history.release_windows()], [(15, 10, 30)])
 
+    def test_rgbd_release_detects_meaningful_opening_before_full_aperture(self):
+        history = TemporalVision()
+        history.observe(0, [], [], [], [0.0385, -0.0385])
+        history.observe(10, [], [1] * 10, [], [0.021, -0.021])
+        history.observe(20, [], [1] * 4 + [-1] * 6, [], [0.0234, -0.0235])
+        self.assertEqual(list(history.release_windows(rgbd=True)), [])
+        history.observe(30, [], [-1] * 10, [], [0.0265, -0.0265])
+        self.assertEqual([(before.step, after.step) for _, before, after in history.release_windows(rgbd=True)], [(10, 30)])
+
     def schedule(self, method):
         return MethodSchedule(method, TaskState.from_labels("scene", ["can", "box"]), 520, 10)
 

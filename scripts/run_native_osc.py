@@ -416,9 +416,9 @@ def episode(args: argparse.Namespace) -> dict:
                     release_ready = False
                     if history is not None:
                         observe_history(obs, result, [action[-1] for action in actions[:executed]])
-                        release_ready = any(after.step == record["steps"] for _, _, after in history.release_windows())
+                        release_ready = any(after.step == record["steps"] for _, _, after in history.release_windows(rgbd=use_rgbd))
                         for completed_target, confirmed in list(confirmed_frames.items()):
-                            if not history.confirmation_valid(confirmed):
+                            if not history.confirmation_valid(confirmed, rgbd=use_rgbd):
                                 del confirmed_frames[completed_target]
                                 invalidated_through[completed_target] = record["steps"]
                                 schedule.reopen(completed_target)

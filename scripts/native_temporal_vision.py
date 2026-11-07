@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from native_visual import OBJECT_APPEARANCE, STATUSES
-from native_rgbd_placement import RGBD_STRATEGIES, geometry_evidence, has_deposit, held_identity
+from native_rgbd_placement import RGBD_STRATEGIES, geometry_evidence, has_deposit, held_identity, wall_still_visible
 from tableclear.models import VerdictStatus
 
 
@@ -72,15 +72,22 @@ class TemporalVision:
         left, right = gripper_qpos
         self.frames.append(Frame(step, images, hashes, abs(float(left) - float(right)), geometry))
 
-    def release_windows(self):
-        open_width = 0.8 * self.frames[0].gripper_width
+    def open_after(self, before, after, *, rgbd=False):
+        full = self.frames[0].gripper_width
+        if rgbd:
+            return after.gripper_width >= max(0.64 * full, before.gripper_width + 0.010)
+        return after.gripper_width >= 0.8 * full
+
+    def release_windows(self, *, rgbd=False):
         for released in release_steps(self.commands):
             before = next((frame for frame in reversed(self.frames) if frame.step < released), None)
+            if before is None:
+                continue
             after = next((
                 frame for frame in self.frames
-                if released + 3 <= frame.step <= released + 26 and frame.gripper_width >= open_width
+                if released + 3 <= frame.step <= released + 26 and self.open_after(before, frame, rgbd=rgbd)
             ), None)
-            if before is not None and after is not None:
+            if after is not None:
                 yield released, before, after
 
     def static_at(self, planner, frame, target_id, label):
@@ -122,9 +129,11 @@ class TemporalVision:
         self.events[key] = result
         return result, 1
 
-    def confirmation_valid(self, frame_step: int) -> bool:
+    def confirmation_valid(self, frame_step: int, *, rgbd=False) -> bool:
         confirmed = next(frame for frame in self.frames if frame.step == frame_step)
         current = self.frames[-1]
+        if rgbd:
+            return wall_still_visible(self.frames[0], current) and wall_still_visible(confirmed, current)
         return basket_difference(self.frames[0], current) < 60 and basket_difference(confirmed, current) < 25
 
     def grasp_view(self, released, before):
@@ -141,7 +150,7 @@ class TemporalVision:
         observations = []
         eligible = [
             frame for frame in self.frames
-            if after.step <= frame.step <= released + 36 and frame.gripper_width >= 0.8 * self.frames[0].gripper_width
+            if after.step <= frame.step <= released + 36 and self.open_after(before, frame, rgbd=True)
         ]
         confirmed = None
         calls = 0
@@ -150,7 +159,7 @@ class TemporalVision:
             evidence = geometry_evidence(before, frame, label)
             if evidence is None:
                 break
-            stable = basket_difference(frame, current) < 25
+            stable = wall_still_visible(frame, current)
             upright = basket_difference(self.frames[0], frame) < 22 and basket_difference(before, frame) < 22
             observations.append({
                 "frame": frame.step, "basket_stable": stable, "basket_upright": upright,
@@ -249,14 +258,16 @@ class TemporalVision:
         current_vote, calls = self.static_at(planner, current, target_id, label)
         status = current_vote["status"]
         initial_delta = basket_difference(self.frames[0], current)
+        rgbd = strategy in RGBD_STRATEGIES
+        basket_valid = wall_still_visible(self.frames[0], current) if rgbd else initial_delta < 60
         evidence = []
         accepted = None
         reason = "current_nonplacement"
-        if initial_delta < 60:
-            for released, before, after in reversed(list(self.release_windows())):
+        if basket_valid:
+            for released, before, after in reversed(list(self.release_windows(rgbd=rgbd))):
                 if after.step <= invalidated_through:
                     break
-                if strategy in RGBD_STRATEGIES:
+                if rgbd:
                     depth, count = self.depth_event(
                         planner, target_id, label, released, before, after, current,
                         use_static=strategy == "rgbd_hybrid" and status == "in_basket",
@@ -290,7 +301,7 @@ class TemporalVision:
             if accepted is not None:
                 status, reason = "in_basket", "visible_after_release"
         if status == "in_basket" and accepted is None:
-            status, reason = "unknown", "basket_moved" if initial_delta >= 60 else "placement_unconfirmed"
+            status, reason = "unknown", "basket_moved" if not basket_valid else "placement_unconfirmed"
         return {
             "target_id": target_id, "target": label, "status": status, "inferences": calls,
             "parsed": current_vote["parsed"] and all(
