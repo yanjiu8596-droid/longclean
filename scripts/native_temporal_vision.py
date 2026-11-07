@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from native_visual import OBJECT_APPEARANCE, STATUSES
+from native_rgbd_placement import RGBD_STRATEGIES, geometry_evidence, has_deposit, held_identity
 from tableclear.models import VerdictStatus
 
 
@@ -17,6 +18,7 @@ class Frame:
     images: list
     hashes: list[str]
     gripper_width: float
+    geometry: dict | None = None
 
 
 def release_steps(commands: list[float]) -> list[int]:
@@ -61,13 +63,14 @@ class TemporalVision:
         self.static = {}
         self.events = {}
         self.identities = {}
+        self.held_identities = {}
 
-    def observe(self, step: int, images: list, commands: list[float], hashes: list[str], gripper_qpos) -> None:
+    def observe(self, step: int, images: list, commands: list[float], hashes: list[str], gripper_qpos, geometry=None) -> None:
         if step != len(self.commands) + len(commands) or self.frames and step <= self.frames[-1].step:
             raise ValueError("temporal observations must have contiguous native actions")
         self.commands.extend(commands)
         left, right = gripper_qpos
-        self.frames.append(Frame(step, images, hashes, abs(float(left) - float(right))))
+        self.frames.append(Frame(step, images, hashes, abs(float(left) - float(right)), geometry))
 
     def release_windows(self):
         open_width = 0.8 * self.frames[0].gripper_width
@@ -123,6 +126,38 @@ class TemporalVision:
         confirmed = next(frame for frame in self.frames if frame.step == frame_step)
         current = self.frames[-1]
         return basket_difference(self.frames[0], current) < 60 and basket_difference(confirmed, current) < 25
+
+    def depth_event(self, planner, label, released, before, after, current):
+        observations = []
+        eligible = [
+            frame for frame in self.frames
+            if after.step <= frame.step <= released + 36 and frame.gripper_width >= 0.8 * self.frames[0].gripper_width
+        ]
+        confirmed = None
+        for frame in eligible:
+            evidence = geometry_evidence(before, frame, label)
+            if evidence is None:
+                break
+            stable = basket_difference(frame, current) < 25
+            observations.append({
+                "frame": frame.step, "basket_stable": stable, "image_sha256": frame.hashes, **evidence,
+            })
+            if stable and has_deposit(evidence):
+                confirmed = frame.step
+                break
+        calls = 0
+        identity = self.held_identities.get(released)
+        if confirmed is not None and identity is None:
+            identity, calls = held_identity(planner, before)
+            self.held_identities[released] = identity
+        if identity is None or identity["label"] != label or not identity["parsed"]:
+            confirmed = None
+        return {
+            "release_step": released, "before": before.step, "after": after.step, "confirmed": confirmed,
+            "status": "in_basket" if confirmed is not None else "unknown",
+            "parsed": identity is None or identity["parsed"], "depth_evidence": observations,
+            "held_identity": identity,
+        }, calls
 
     def identify_at(self, planner, released, before, after, strategy):
         import numpy as np
@@ -190,6 +225,15 @@ class TemporalVision:
             for released, before, after in reversed(list(self.release_windows())):
                 if after.step <= invalidated_through:
                     break
+                if strategy in RGBD_STRATEGIES:
+                    depth, count = self.depth_event(planner, label, released, before, after, current)
+                    calls += count
+                    evidence.append(depth)
+                    if depth["confirmed"] is not None:
+                        accepted = depth["confirmed"]
+                        break
+                    if strategy == "rgbd_placement" or depth["held_identity"] is not None:
+                        continue
                 visible_lining = lining_fraction(after)
                 if visible_lining < 0.03:
                     evidence.append({
