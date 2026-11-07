@@ -10,17 +10,18 @@ import subprocess
 from validate_temporal_vision import MODEL, PROJECT, VisualPlanner, evaluate, model_pin, panel, qualified, trajectory
 from native_rgbd_placement import RGBD_STRATEGIES
 from native_visual_references import create_references, load_references
-from replay_native_frames import DEVELOPMENT, scene_labels
+from replay_native_frames import DEVELOPMENT, replay_panel, scene_labels
 
 
 def calibrate(args):
     args.output.mkdir(parents=True, exist_ok=False)
     references = create_references(args.run, args.output)
+    cases = panel(args.run, scene_labels(), DEVELOPMENT, 3)
+    replay_panel(cases, args.frames, args.sim_python, args.roboenv, args.workers, rgbd=True)
     planner = VisualPlanner(
         args.model, "rgbd-calibration", ["probe target"], fixed=False,
         references=load_references(args.output, references),
     )
-    cases = panel(args.run, scene_labels(), DEVELOPMENT, 3)
     report = {
         "project_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True).strip(),
         "model": model_pin(args.model, MODEL), "references": references, "gate_passed": False,
@@ -53,6 +54,7 @@ def calibrate(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("run", "output", "frames", "regression", "model"):
+    for name in ("run", "output", "frames", "regression", "model", "sim-python", "roboenv"):
         parser.add_argument(f"--{name}", type=Path, required=True)
+    parser.add_argument("--workers", type=int, choices=range(1, 11), default=8)
     calibrate(parser.parse_args())
