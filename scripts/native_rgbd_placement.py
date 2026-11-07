@@ -30,16 +30,10 @@ def cloud(frame, camera):
     return data["clouds"][camera]
 
 
-def held_identity(planner, before):
+def held_crops(before):
     import numpy as np
-    from PIL import Image, ImageDraw
+    from PIL import Image
 
-    examples = Image.new("RGB", (512, 148), "white")
-    draw = ImageDraw.Draw(examples)
-    labels = list(OBJECT_APPEARANCE)
-    for index, label in enumerate(labels):
-        examples.paste(planner.references[label].resize((128, 128)), (128 * index, 20))
-        draw.text((128 * index + 4, 3), str(index + 1), fill="black")
     held = []
     center = before.geometry["eef"]
     for camera, source in enumerate(before.images):
@@ -58,9 +52,22 @@ def held_identity(planner, before):
         if max(crop.size) < 192:
             scale = 192 / max(crop.size)
             crop = crop.resize(tuple(max(1, round(side * scale)) for side in crop.size), Image.Resampling.BICUBIC)
-        held.append(crop)
+        held.append((camera, crop))
+    return held
+
+
+def held_identity(planner, before):
+    from PIL import Image, ImageDraw
+
+    held = [crop for _, crop in held_crops(before)]
     if not held:
         return {"raw": "no held-object pixels", "label": None, "parsed": True}, 0
+    examples = Image.new("RGB", (512, 148), "white")
+    draw = ImageDraw.Draw(examples)
+    labels = list(OBJECT_APPEARANCE)
+    for index, label in enumerate(labels):
+        examples.paste(planner.references[label].resize((128, 128)), (128 * index, 20))
+        draw.text((128 * index + 4, 3), str(index + 1), fill="black")
     prompt = (
         "The first image shows four numbered reference packages. The following images highlight the 3D area "
         "immediately below the fingers before they open. Identify the object actually held by the fingers. "
