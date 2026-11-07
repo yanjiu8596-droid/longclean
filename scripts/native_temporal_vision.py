@@ -44,6 +44,15 @@ def basket_difference(a: Frame, b: Frame) -> float:
     return float(np.abs(wall(a) - wall(b)).mean())
 
 
+def lining_fraction(frame: Frame) -> float:
+    import numpy as np
+
+    wrist = np.asarray(frame.images[1], dtype=np.int16)[28:218, 25:231]
+    light = wrist.min(axis=2) > 140
+    neutral = np.ptp(wrist, axis=2) < 30
+    return float((light & neutral).mean())
+
+
 class TemporalVision:
     def __init__(self):
         self.frames: list[Frame] = []
@@ -102,7 +111,12 @@ class TemporalVision:
         self.events[key] = result
         return result, 1
 
-    def inspect(self, planner, target_id: str, label: str, strategy: str) -> dict:
+    def confirmation_valid(self, frame_step: int) -> bool:
+        confirmed = next(frame for frame in self.frames if frame.step == frame_step)
+        current = self.frames[-1]
+        return basket_difference(self.frames[0], current) < 60 and basket_difference(confirmed, current) < 25
+
+    def inspect(self, planner, target_id: str, label: str, strategy: str, *, invalidated_through: int = -1) -> dict:
         current = self.frames[-1]
         current_vote, calls = self.static_at(planner, current, target_id, label)
         status = current_vote["status"]
@@ -112,10 +126,20 @@ class TemporalVision:
         reason = "current_nonplacement"
         if initial_delta < 60:
             for released, before, after in reversed(list(self.release_windows())):
+                if after.step <= invalidated_through:
+                    break
+                visible_lining = lining_fraction(after)
+                if visible_lining < 0.03:
+                    evidence.append({
+                        "release_step": released, "before": before.step, "after": after.step,
+                        "status": "unknown", "parsed": True, "raw": "basket_lining_not_visible",
+                        "wrist_lining_fraction": visible_lining, "image_sha256": [before.hashes, after.hashes],
+                    })
+                    continue
                 event, count = self.event_at(planner, label, released, before, after)
                 calls += count
                 delta = basket_difference(after, current)
-                evidence.append({**event, "wall_difference_to_current": delta})
+                evidence.append({**event, "wall_difference_to_current": delta, "wrist_lining_fraction": visible_lining})
                 if event["status"] == "in_basket" and delta < 25:
                     accepted = after.step
                     break
@@ -126,7 +150,10 @@ class TemporalVision:
                 prior_vote, count = self.static_at(planner, previous, target_id, label)
                 calls += count
                 evidence.append(prior_vote)
-                if prior_vote["status"] == "in_basket" and basket_difference(previous, current) < 25:
+                if (
+                    prior_vote["status"] == "in_basket" and previous.step > invalidated_through
+                    and basket_difference(previous, current) < 25
+                ):
                     accepted = current.step
                     reason = "consistent_recent_views"
         if status == "in_basket" and accepted is None:

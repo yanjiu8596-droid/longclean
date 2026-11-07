@@ -48,6 +48,16 @@ class NativeMethodScheduleTests(unittest.TestCase):
             self.assertEqual(schedule.action(steps, "")[0], "object_2")
         self.assertIsNone(schedule.action(520, ""))
 
+    def test_temporal_invalidation_reopens_a_retired_target(self):
+        schedule = self.schedule("closed_loop_vla")
+        schedule.action(0, "")
+        schedule.apply_visual("in_basket", 50)
+        schedule.action(50, "")
+        schedule.apply_visual("in_basket", 100)
+        self.assertIsNone(schedule.action(100, ""))
+        schedule.reopen("object_1")
+        self.assertEqual(schedule.action(100, "")[0], "object_1")
+
     def test_formal_jobs_share_45_conditions_and_reserve_pilot_indices(self):
         formal = jobs_for("formal")
         self.assertEqual(len(formal), 135)

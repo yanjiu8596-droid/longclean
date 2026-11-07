@@ -57,16 +57,19 @@ class VisualPlanner:
         )
 
     def inspect(self, observation: dict, target_id: str) -> dict:
+        target = self.controller.state.get(target_id)
+        return self.inspect_images(self.image_views(observation), target.id, target.label)
+
+    def image_views(self, observation: dict) -> list:
         from PIL import Image
 
-        target = self.controller.state.get(target_id)
         images = []
         for camera in ("camera1", "camera2"):
             frame = observation[f"observation.images.{camera}"][0].permute(1, 2, 0)
             images.append(Image.fromarray(frame.mul(255).round().byte().numpy()))
         if self.strategy in SUPPLEMENTAL_VIEWS:
             images.append(Image.fromarray(observation["visual_rgb"]))
-        return self.inspect_images(images, target.id, target.label)
+        return images
 
     def inspect_images(self, images: list, target_id: str, label: str) -> dict:
         if self.strategy != "basket_consensus":
@@ -216,10 +219,11 @@ class VisualPlanner:
         scores = result.scores[0][0, [ids[0] for ids in token_ids]].float()
         return text, (scores[0] - scores[1:].max()).item()
 
-    def inventory(self, observation: dict) -> list[dict]:
+    def inventory(self, observation: dict, *, inspect=None) -> list[dict]:
+        inspect = inspect or self.inspect
         results = []
         for target in self.controller.state.objects:
-            result = self.inspect(observation, target.id)
+            result = inspect(observation, target.id)
             results.append(result)
             if result["status"] == VerdictStatus.IN_BASKET:
                 target.status = ObjectStatus.IN_BASKET

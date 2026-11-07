@@ -55,7 +55,17 @@ def evaluate(planner, cases, frames_dir, strategies, split):
                     "split": split, "strategy": strategy, "scene": scene, "init": row["init"],
                     "target": label, "prediction": prediction, "reason": answer["raw"],
                 }), flush=True)
-    return {strategy: {"score": summarize(rows), "records": rows} for strategy, rows in records.items()}
+    results = {}
+    for strategy, rows in records.items():
+        static = []
+        for row in rows:
+            answer = row["answer"]["current"]
+            static.append({
+                **row, "answer": answer,
+                "predicted_in_basket": None if answer["status"] == "unknown" else answer["status"] == "in_basket",
+            })
+        results[strategy] = {"score": summarize(rows), "same_cases_static_score": summarize(static), "records": rows}
+    return results
 
 
 def run(args):
@@ -78,7 +88,7 @@ def run(args):
 
     save()
     scenes = scene_labels()
-    calibration = panel(args.run, scenes, DEVELOPMENT, 2)
+    calibration = panel(args.run, scenes, DEVELOPMENT, 3)
     replay_panel(calibration, args.frames, args.sim_python, args.roboenv, args.workers)
     planner = VisualPlanner(
         args.model, "temporal-validation", ["probe target"], fixed=False,

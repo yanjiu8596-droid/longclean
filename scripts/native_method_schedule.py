@@ -64,6 +64,11 @@ class MethodSchedule:
         elif verdict == VerdictStatus.ON_TABLE:
             target.status = ObjectStatus.PENDING
 
+    def reopen(self, target_id: str) -> None:
+        self.state.get(target_id).status = ObjectStatus.PENDING
+        if target_id not in self.targets:
+            self.targets.append(target_id)
+
 
 def accepted_visual_provider(
     report_path: Path, project: Path, workspace: Path, *, runtime_probe: bool = False,

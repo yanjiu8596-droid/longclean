@@ -200,6 +200,9 @@ def episode(args: argparse.Namespace) -> dict:
     visual_provider = None
     visual_path = None
     supplemental_camera = None
+    history = None
+    confirmed_frames = {}
+    invalidated_through = {}
     scheduled_methods = args.fair_methods or args.vision_runtime_probe
     if scheduled_methods and args.visual_validation is not None:
         sys.path.insert(0, str(PROJECT / "src"))
@@ -254,6 +257,24 @@ def episode(args: argparse.Namespace) -> dict:
                     **({"extra_view_sha256": simulator["extra_view_sha256"]} if supplemental_camera else {}),
                 }) + "\n")
 
+    def observe_history(observation, simulator, commands):
+        history.observe(
+            record["steps"], planner.image_views(observation), commands,
+            [simulator["observation_sha256"][name] for name in CAMERAS],
+        )
+
+    def inspect_target(observation, target_id):
+        if history is None:
+            return planner.inspect(observation, target_id)
+        label = planner.controller.state.get(target_id).label
+        decision = history.inspect(
+            planner, target_id, label, planner.strategy,
+            invalidated_through=invalidated_through.get(target_id, -1),
+        )
+        if decision["confirmed_frame"] is not None:
+            confirmed_frames[target_id] = decision["confirmed_frame"]
+        return decision
+
     try:
         with (output / "simulator.log").open("w", encoding="utf-8") as sim_log, (
             output / "actions.jsonl"
@@ -289,6 +310,7 @@ def episode(args: argparse.Namespace) -> dict:
 
                         state = TaskState.from_labels(record["task_id"], labels)
                         if args.method == "closed_loop_vla":
+                            from native_temporal_vision import TEMPORAL_STRATEGIES, TemporalVision
                             from native_visual_references import load_references
 
                             references = visual_provider["references"]
@@ -298,7 +320,10 @@ def episode(args: argparse.Namespace) -> dict:
                                 references=load_references(args.visual_validation.parent, references) if references else None,
                             )
                             record["vision"] = visual_provider
-                            record_visual(planner.inventory(obs), initial, "inventory")
+                            if planner.strategy in TEMPORAL_STRATEGIES:
+                                history = TemporalVision()
+                                observe_history(obs, initial, [])
+                            record_visual(planner.inventory(obs, inspect=inspect_target), initial, "inventory")
                             state = planner.controller.state
                         schedule = MethodSchedule(args.method, state, args.steps, args.chunk_steps)
                         record["chunk_horizon"] = args.chunk_steps
@@ -357,10 +382,24 @@ def episode(args: argparse.Namespace) -> dict:
                     record["final_sim_time"] = result["sim_time"]
                     record["audit_goals"] = result["audit_goals"]
                     obs = read_observation(instruction)
-                    if schedule and planner and schedule.needs_visual_update(
+                    release_ready = False
+                    if history is not None:
+                        observe_history(obs, result, [action[-1] for action in actions[:executed]])
+                        release_ready = any(after.step == record["steps"] for _, _, after in history.release_windows())
+                        for completed_target, confirmed in list(confirmed_frames.items()):
+                            if not history.confirmation_valid(confirmed):
+                                del confirmed_frames[completed_target]
+                                invalidated_through[completed_target] = record["steps"]
+                                schedule.reopen(completed_target)
+                                record_visual([{
+                                    "target_id": completed_target, "target": schedule.state.get(completed_target).label,
+                                    "status": "unknown", "raw": "basket_changed_since_confirmation",
+                                    "parsed": True, "inferences": 0, "previous_confirmation": confirmed,
+                                }], result, "recheck")
+                    if schedule and planner and (release_ready or schedule.needs_visual_update(
                         record["steps"], result["success"] or result["done"],
-                    ):
-                        decision = planner.inspect(obs, target)
+                    )):
+                        decision = inspect_target(obs, target)
                         record_visual([decision], result, "progress")
                         schedule.apply_visual(decision["status"], record["steps"])
                     elif schedule is None and planner and not planner.fixed:
