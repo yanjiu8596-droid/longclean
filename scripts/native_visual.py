@@ -46,17 +46,20 @@ class VisualPlanner:
             "2 = visible on the table, outside the basket. 3 = held by the robot gripper. "
             "4 = not visible or cannot tell. Use 4 if unsure."
         )
+        text = self.answer(images, question)
+        token = text.strip(". \n\t")
+        status = STATUSES.get(token, VerdictStatus.UNKNOWN)
+        return {"target_id": target_id, "target": target.label, "status": status.value, "raw": text, "parsed": token in STATUSES}
+
+    def answer(self, images: list, question: str) -> str:
         messages = [{"role": "user", "content": [
-            {"type": "image"}, {"type": "image"}, {"type": "text", "text": question},
+            *({"type": "image"} for _ in images), {"type": "text", "text": question},
         ]}]
         prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
         batch = self.processor(text=prompt, images=images, return_tensors="pt").to("cuda", dtype=self.torch.bfloat16)
         with self.torch.inference_mode():
             result = self.model.generate(**batch, max_new_tokens=12, do_sample=False)
-        text = self.processor.decode(result[0, batch["input_ids"].shape[1]:], skip_special_tokens=True).strip()
-        token = text.strip(". \n\t")
-        status = STATUSES.get(token, VerdictStatus.UNKNOWN)
-        return {"target_id": target_id, "target": target.label, "status": status.value, "raw": text, "parsed": token in STATUSES}
+        return self.processor.decode(result[0, batch["input_ids"].shape[1]:], skip_special_tokens=True).strip()
 
     def inventory(self, observation: dict) -> list[dict]:
         results = []
