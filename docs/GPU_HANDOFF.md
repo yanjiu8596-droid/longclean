@@ -100,3 +100,22 @@ The session advances only on accepted action batches and uses the observation
 frame to reject stale requests. The legacy scheduler remains the default in
 workspaces without that environment variable.
 
+## Five-hour native diagnostic job
+
+`scripts/run_overnight_native.py` first runs `libero-10-01` with the offline
+SmolVLM2 visual planner and the pinned SmolVLA policy. The planner sees the
+camera views and target names. LIBERO's goal predicates are recorded separately
+to audit basket predictions. The smoke gate requires a complete inventory and
+at least one progress reading with parsed answers and no basket mismatches.
+
+The job runs a small paired method pilot if that gate passes. It then sweeps
+5, 10, 25, and 50 action chunks on the three V1 tasks using diagnostic
+init-state indices 15–49. A five-hour wall deadline bounds the worker, including
+the active episode. The formal matrix uses its own initial states and is
+launched separately after the high-level and full episode gates.
+
+Each job writes `summary.json` atomically, appends `results.jsonl` after each
+episode, and retains each episode's own logs. Read `summary.json` for the
+active phase, deadline and counts. See `visual_smoke.visual` for the first
+visual audit and `visual_smoke_gate` for the routing decision.
+

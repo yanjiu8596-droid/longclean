@@ -111,6 +111,23 @@ path before running the 135-episode matrix.
   See `device-smoke.json`, `parity.json`, and `kinex-osc/actions.jsonl`.
   The local test suite passed 19 tests.
 
+## Offline visual smoke and bounded job — 2026-11-07 (Asia/Shanghai)
+
+- At `72efdf9`, the standalone native runner used the pinned SmolVLM2 base
+  model for visual inventory and progress, and SmolVLA for action execution.
+  LIBERO goal predicates were available only to the independent audit.
+- The `libero-10-01` smoke completed 60 frames and ended at the configured
+  retry limit. LIBERO returned `success=false`. Both inventory readings and
+  five of six progress readings returned `unknown`. This failed the visual
+  smoke gate.
+- The detached job switched to paired direct-VLA horizon diagnostics on the
+  three V1 scenes. It reserved init-state indices 0–14 for the formal matrix
+  and used indices 15–49 for diagnostics. The formal matrix was not started.
+- The job output is in `tableclear-workspace/results/overnight-native-20261107T020511Z`.
+  `summary.json` reports its current status. `results.jsonl` tracks completed
+  episodes, and `visual.jsonl` in the smoke directory contains raw responses
+  and simulator audit labels. The wall deadline is approximately 15:05 CST.
+
 ## First GPU Acceptance Gate
 
 1. Verify `nvidia-smi` and `torch.cuda.is_available()` after switching modes.
