@@ -65,6 +65,17 @@ def archive(run: Path, output: Path, *, final: bool, replays: Path | None) -> di
 
         add("index/summary.json", summary_bytes)
         add("index/results.jsonl", result_bytes)
+        episode_metrics = []
+        for row in completed:
+            name = row.get("artifact", row["run"])
+            if not isinstance(name, str) or Path(name).name != name or name in {".", ".."}:
+                raise ValueError(f"invalid episode directory: {name}")
+            path = run / name / "episode.json"
+            if path.is_file():
+                episode = json.loads(path.read_bytes())
+                keys = ("project_commit", "bddl_sha256", "vla_calls", "visual_calls", "started_at", "finished_at", "control_hz")
+                episode_metrics.append(json.dumps({"run": row["run"], **{key: episode.get(key) for key in keys}}) + "\n")
+        add("index/episode-metrics.jsonl", "".join(episode_metrics).encode())
         for name in ("concurrency-cutover.json", "completion-cutover.json", "scaling-cutover.json"):
             add_file(run, name, "index")
         for name, files in HISTORICAL.items():

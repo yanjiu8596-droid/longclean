@@ -32,3 +32,12 @@ at 20 fps. `replay.json` identifies the source episode, original result, replay
 commit and hashes of the source trace and video. Treat it as a verified replay
 when using it in a portfolio. Keep large experiment files in the evidence
 archive and use Git for code, configs and documentation.
+
+Regenerate the diagnostic statistics directly from the archive. The report uses
+only conditions with all four horizons present and matching initial-state
+hashes. It reports success counts, paired changes against 50 steps and step
+differences on cases where both horizons succeeded.
+
+```bash
+python scripts/summarize_horizon_diagnostics.py --archive FINAL.zip --output-dir EVIDENCE_DIRECTORY
+```
