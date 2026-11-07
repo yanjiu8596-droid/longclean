@@ -19,6 +19,7 @@ from run_overnight_native import EPISODE_SCRIPT, METHODS, SCENES, visual_audit
 
 
 PROJECT = EPISODE_SCRIPT.parent.parent
+MAX_WORKERS = 10
 sys.path.insert(0, str(PROJECT / "src"))
 
 from tableclear.config import expand_matrix, load_evaluation_config
@@ -194,7 +195,7 @@ def run(args):
                 limit = root / "worker-limit.json"
                 if limit.exists():
                     limits = json.loads(limit.read_bytes())
-                    workers = max(1, min(8, int(limits.get("workers", workers))))
+                    workers = max(1, min(MAX_WORKERS, int(limits.get("workers", workers))))
                     visual_workers = max(1, min(workers, 2, int(limits.get("visual_workers", visual_workers))))
             for _ in range(len(pending)):
                 if len(active) >= workers or blocked:
@@ -274,8 +275,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("output", "workspace", "roboenv", "sim-python", "visual-validation"):
         parser.add_argument(f"--{name}", type=Path, required=True)
-    parser.add_argument("--workers", type=int, choices=range(1, 9), default=8)
+    parser.add_argument("--workers", type=int, choices=range(1, MAX_WORKERS + 1), default=MAX_WORKERS)
     parser.add_argument("--visual-workers", type=int, choices=(1, 2), default=2)
     parser.add_argument("--gpu-budget-mib", type=int, default=22500)
-    parser.add_argument("--baseline-peak-mib", type=int, default=2800)
+    parser.add_argument("--baseline-peak-mib", type=int, default=2250)
     run(parser.parse_args())
