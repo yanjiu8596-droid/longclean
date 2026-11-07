@@ -125,7 +125,7 @@ def accept(args):
     cases = holdout_cases(args.holdout_run, excluded)
     args.output.mkdir(parents=True, exist_ok=False)
     references = create_references(args.run, args.output)
-    if references != report["references"]:
+    if json.dumps(references, sort_keys=True) != json.dumps(report["references"], sort_keys=True):
         raise ValueError("visual reference images differ from calibration")
     result = {
         "status": "validating_holdout", "gate_passed": False, "selected": report["selected"], "references": references,
