@@ -239,7 +239,8 @@ def episode(args: argparse.Namespace) -> dict:
                 record["model_artifacts"] = config["intrinsics"]["artifacts"]
                 record["model"] = config["intrinsics"]["variant"]
                 planner = None
-                if args.method != "direct_vla":
+                schedule = None
+                if args.fair_methods or args.method != "direct_vla":
                     import tomllib
 
                     sys.path.insert(0, str(PROJECT / "src"))
@@ -248,19 +249,40 @@ def episode(args: argparse.Namespace) -> dict:
                     with (PROJECT / "configs" / "v1_eval.toml").open("rb") as settings:
                         scenes = tomllib.load(settings)["scenes"]
                     labels = next(scene["objects"] for scene in scenes if scene["source_task"] == record["task_id"])
-                    base = next(a for a in record["model_artifacts"] if a["name"] == "smolvlm2_500m_video_instruct")
-                    planner = VisualPlanner(
-                        (artifact_root / base["path"]).resolve(), record["task_id"], labels,
-                        fixed=args.method == "fixed_checklist_vla",
-                    )
-                    record_visual(planner.inventory(obs), initial, "inventory")
+                    if args.fair_methods:
+                        from native_method_schedule import MethodSchedule, accepted_visual_provider
+                        from tableclear.state import TaskState
+
+                        state = TaskState.from_labels(record["task_id"], labels)
+                        if args.method == "closed_loop_vla":
+                            path, strategy, pin = accepted_visual_provider(args.visual_validation, PROJECT, args.workspace)
+                            planner = VisualPlanner(path, record["task_id"], labels, fixed=False, strategy=strategy)
+                            record["vision"] = {**pin, "strategy": strategy}
+                            record_visual(planner.inventory(obs), initial, "inventory")
+                            state = planner.controller.state
+                        schedule = MethodSchedule(args.method, state, args.steps, args.chunk_steps)
+                        record["chunk_horizon"] = args.chunk_steps
+                        record["method_protocol"] = "shared-action-budget-v1"
+                    else:
+                        base = next(a for a in record["model_artifacts"] if a["name"] == "smolvlm2_500m_video_instruct")
+                        planner = VisualPlanner(
+                            (artifact_root / base["path"]).resolve(), record["task_id"], labels,
+                            fixed=args.method == "fixed_checklist_vla",
+                        )
+                        record_visual(planner.inventory(obs), initial, "inventory")
                 service = None
                 horizon = args.chunk_steps or (10 if planner else None)
                 record["final_sim_time"] = initial["sim_time"]
                 record["terminal_reason"] = "simulator_success" if initial["success"] else "step_budget"
                 while not record["success"] and record["steps"] < args.steps:
                     target = None
-                    if planner:
+                    if schedule:
+                        planned = schedule.action(record["steps"], initial["instruction"])
+                        if planned is None:
+                            record["terminal_reason"] = "visual_clear"
+                            break
+                        target, instruction, count = planned
+                    elif planner:
                         subtask = planner.next_subtask()
                         if subtask is None:
                             record["terminal_reason"] = "checklist_end" if planner.fixed else (
@@ -273,7 +295,8 @@ def episode(args: argparse.Namespace) -> dict:
                         service = open_service(config, artifact_root=artifact_root)
                         horizon = horizon or service["policy"].config.n_action_steps
                         record["chunk_horizon"] = horizon
-                    count = min(horizon, args.steps - record["steps"])
+                    if schedule is None:
+                        count = min(horizon, args.steps - record["steps"])
                     actions = predict_chunk(service, {**obs, "task": instruction})[:count]
                     worker.stdin.write(json.dumps(actions, allow_nan=False) + "\n")
                     worker.stdin.flush()
@@ -291,7 +314,13 @@ def episode(args: argparse.Namespace) -> dict:
                     record["final_sim_time"] = result["sim_time"]
                     record["audit_goals"] = result["audit_goals"]
                     obs = read_observation(instruction)
-                    if planner and not planner.fixed:
+                    if schedule and planner and schedule.needs_visual_update(
+                        record["steps"], result["success"] or result["done"],
+                    ):
+                        decision = planner.inspect(obs, target)
+                        record_visual([decision], result, "progress")
+                        schedule.apply_visual(decision["status"], record["steps"])
+                    elif schedule is None and planner and not planner.fixed:
                         record_visual([planner.update(obs, target)], result, "progress")
                     print(f"steps={record['steps']} simulator_success={record['success']}", flush=True)
                     if result["success"] or result["done"] or record["steps"] == args.steps:
@@ -331,6 +360,8 @@ def main() -> None:
     parser.add_argument("--scene", type=int, choices=(1, 2, 8), default=1)
     parser.add_argument("--chunk-steps", type=int, choices=range(1, 51), metavar="1..50")
     parser.add_argument("--method", choices=("direct_vla", "fixed_checklist_vla", "closed_loop_vla"), default="direct_vla")
+    parser.add_argument("--fair-methods", action="store_true")
+    parser.add_argument("--visual-validation", type=Path)
     parser.add_argument("--sim-worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--socket", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--video", type=Path, help=argparse.SUPPRESS)
@@ -344,6 +375,10 @@ def main() -> None:
         return
     if args.workspace is None or args.sim_python is None or args.socket is not None or args.video is not None:
         parser.error("--workspace and --sim-python are required for a direct episode")
+    if args.fair_methods and (args.chunk_steps != 10 or args.steps != 520):
+        parser.error("the paired method protocol uses 10-step chunks and 520 available actions")
+    if args.fair_methods and args.method == "closed_loop_vla" and args.visual_validation is None:
+        parser.error("--visual-validation is required for the paired closed-loop method")
     print(json.dumps(episode(args), indent=2))
 
 

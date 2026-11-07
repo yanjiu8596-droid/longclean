@@ -29,11 +29,13 @@ def visual_audit(output: Path) -> dict:
     rows = [json.loads(line) for line in evidence.read_text().splitlines()] if evidence.exists() else []
     mismatches = 0
     positives = 0
+    false_positives = 0
     for row in rows:
         actual = next((g["satisfied"] for g in row["audit_goals"] if g["predicate"][1] == TARGETS[row["target"]]), None)
         if actual is None or (row["status"] == "in_basket") != actual:
             mismatches += 1
         positives += actual is True and row["status"] == "in_basket"
+        false_positives += actual is False and row["status"] == "in_basket"
     return {
         "inventory": sum(row["stage"] == "inventory" for row in rows),
         "progress": sum(row["stage"] == "progress" for row in rows),
@@ -41,6 +43,7 @@ def visual_audit(output: Path) -> dict:
         "abstentions": sum(row["status"] == "unknown" for row in rows),
         "basket_mismatches": mismatches,
         "confirmed_positives": positives,
+        "false_positives": false_positives,
     }
 
 
