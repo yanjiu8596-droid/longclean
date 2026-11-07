@@ -245,7 +245,7 @@ def episode(args: argparse.Namespace) -> dict:
 
     def record_visual(observations, simulator, stage):
         # The predicates are written to evidence after inference and never enter the prompt.
-        record["visual_calls"] += len(observations)
+        record["visual_calls"] += sum(observation.get("inferences", 1) for observation in observations)
         with (output / "visual.jsonl").open("a", encoding="utf-8") as log:
             for observation in observations:
                 log.write(json.dumps({

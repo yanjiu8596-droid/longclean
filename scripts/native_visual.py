@@ -69,6 +69,28 @@ class VisualPlanner:
         return self.inspect_images(images, target.id, target.label)
 
     def inspect_images(self, images: list, target_id: str, label: str) -> dict:
+        if self.strategy != "basket_consensus":
+            return self.inspect_with_strategy(images, target_id, label, self.strategy, self.min_basket_margin)
+        first = self.inspect_with_strategy(images, target_id, label, "basket_zoom", 3.0)
+        second = self.inspect_with_strategy(images, target_id, label, "basket_wrist", None)
+        evidence = [first, second]
+        statuses = [VerdictStatus(item["status"]) for item in evidence]
+        if statuses.count(VerdictStatus.IN_BASKET) == 1:
+            evidence.append(self.inspect_with_strategy(images, target_id, label, "example_zoom", 5.0))
+            statuses.append(VerdictStatus(evidence[-1]["status"]))
+        if statuses.count(VerdictStatus.IN_BASKET) >= 2:
+            status = VerdictStatus.IN_BASKET
+        else:
+            status = next((s for s in statuses if s in (VerdictStatus.GRASPED, VerdictStatus.ON_TABLE)), VerdictStatus.UNKNOWN)
+        return {
+            "target_id": target_id, "target": label, "status": status.value, "inferences": len(evidence),
+            "raw": " | ".join(item["raw"] for item in evidence), "parsed": all(item["parsed"] for item in evidence),
+            "candidate_evidence": evidence,
+        }
+
+    def inspect_with_strategy(
+        self, images: list, target_id: str, label: str, strategy: str, min_basket_margin: float | None,
+    ) -> dict:
         question = (
             f"These are two simultaneous views of a robot table. Where is the {label}? "
             "Reply with exactly one digit. 1 = visibly inside the basket. "
@@ -76,10 +98,10 @@ class VisualPlanner:
             "4 = not visible or cannot tell. Use 4 if unsure."
         )
         statuses = STATUSES
-        if self.strategy in SUPPLEMENTAL_VIEWS:
+        if strategy in SUPPLEMENTAL_VIEWS:
             from PIL import Image
 
-            _, bounds = SUPPLEMENTAL_VIEWS[self.strategy]
+            _, bounds = SUPPLEMENTAL_VIEWS[strategy]
             supplemental = images[2]
             crop = supplemental.crop(tuple(
                 round(value * dimension) for value, dimension in zip(bounds, (*supplemental.size, *supplemental.size))
@@ -93,11 +115,11 @@ class VisualPlanner:
                 "An object suspended above the rim or a different item inside the basket does not count as 1. "
                 "Answer with one digit."
             )
-        elif self.strategy in {"appearance", "basket_zoom", "basket_wrist", "basket_guard", *EXEMPLAR_STRATEGIES}:
+        elif strategy in {"appearance", "basket_zoom", "basket_wrist", "basket_guard", *EXEMPLAR_STRATEGIES}:
             appearance = OBJECT_APPEARANCE[label]
             wrist = images[1]
             images = images[:1]
-            if self.strategy != "appearance":
+            if strategy != "appearance":
                 from PIL import Image
 
                 view = images[0]
@@ -107,18 +129,18 @@ class VisualPlanner:
                 ))
                 closeup = view.crop(box).resize((336, 504), Image.Resampling.BICUBIC)
                 images.append(closeup)
-            if self.strategy in {"basket_wrist", "basket_guard"}:
+            if strategy in {"basket_wrist", "basket_guard"}:
                 images.append(wrist)
             question = (
                 f"Find the {appearance}. The white-lined wicker basket is on the far left of the first image. "
-                + ("The second image enlarges the basket. " if self.strategy != "appearance" else "")
+                + ("The second image enlarges the basket. " if strategy != "appearance" else "")
                 + ("The third image looks down from the gripper and can distinguish an item held above "
                    "the basket from an item resting inside. " if len(images) == 3 else "")
                 + "Where is the named item? Use 1 for inside the white-lined basket, 2 for outside the basket "
                 "on the brown worktop, 3 for held between the robot fingers, or 4 for fully hidden. "
                 "Answer with one digit."
             )
-            if self.strategy == "basket_guard":
+            if strategy == "basket_guard":
                 question = (
                     f"Locate only the {appearance}. Image 1 shows the entire worktop, image 2 is a magnified "
                     "crop around the white-lined wicker basket, and image 3 is the wrist camera. "
@@ -128,9 +150,9 @@ class VisualPlanner:
                     "the white lining. A different item inside the basket does not count. If neither view "
                     "identifies the named item, answer 4. Output exactly one digit."
                 )
-            if self.strategy in EXEMPLAR_STRATEGIES:
+            if strategy in EXEMPLAR_STRATEGIES:
                 images.insert(0, self.references[label])
-                if self.strategy == "example_wrist":
+                if strategy == "example_wrist":
                     images.append(wrist)
                 question = (
                     f"The first image is a separate reference photograph of the target, a {appearance}. "
@@ -143,11 +165,11 @@ class VisualPlanner:
                     "An item of a different color or only held above the rim does not count as 1. "
                     "Reply with one digit."
                 )
-        elif self.strategy != "original":
-            if self.strategy == "external":
+        elif strategy != "original":
+            if strategy == "external":
                 images = images[:1]
-            elif self.strategy != "dual":
-                raise ValueError(f"unsupported visual strategy: {self.strategy}")
+            elif strategy != "dual":
+                raise ValueError(f"unsupported visual strategy: {strategy}")
             question = (
                 f"Locate the {label} in this robot manipulation scene. The rectangular "
                 "container with woven sides and a pale fabric lining is the basket. "
@@ -157,13 +179,13 @@ class VisualPlanner:
                 "Answer UNKNOWN if you cannot locate the named object. Reply with one word."
             )
             statuses = LOCATION_WORDS
-        text, margin = self.generate(images, question, score_digits=self.min_basket_margin is not None)
+        text, margin = self.generate(images, question, score_digits=min_basket_margin is not None)
         token = text.strip(". \n\t").lower()
         status = statuses.get(token, VerdictStatus.UNKNOWN)
         result = {"target_id": target_id, "target": label, "status": status.value, "raw": text, "parsed": token in statuses}
         if margin is not None:
             result["basket_margin"] = margin
-            if status == VerdictStatus.IN_BASKET and margin < self.min_basket_margin:
+            if status == VerdictStatus.IN_BASKET and margin < min_basket_margin:
                 result["status"] = VerdictStatus.UNKNOWN.value
         return result
 

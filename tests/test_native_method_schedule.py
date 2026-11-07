@@ -7,6 +7,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from native_method_schedule import MethodSchedule, accepted_visual_provider
+from native_visual import VisualPlanner
 from run_native_methods import jobs_for
 from tableclear.state import TaskState
 
@@ -69,3 +70,21 @@ class NativeMethodScheduleTests(unittest.TestCase):
                 accepted_visual_provider(report, project, root)
             _, provider = accepted_visual_provider(report, project, root, runtime_probe=True)
             self.assertEqual(provider["strategy"], "basket_zoom")
+
+    def test_consensus_only_uses_reference_for_a_disagreement(self):
+        planner = VisualPlanner.__new__(VisualPlanner)
+        planner.strategy = "basket_consensus"
+        called = []
+        statuses = {"basket_zoom": "in_basket", "basket_wrist": "on_table", "example_zoom": "in_basket"}
+
+        def inspect(_images, _target, _label, strategy, _margin):
+            called.append(strategy)
+            return {"status": statuses[strategy], "raw": "test", "parsed": True}
+
+        planner.inspect_with_strategy = inspect
+        self.assertEqual(planner.inspect_images([], "object_1", "can")["status"], "in_basket")
+        self.assertEqual(called, ["basket_zoom", "basket_wrist", "example_zoom"])
+        called.clear()
+        statuses["basket_zoom"] = "on_table"
+        self.assertEqual(planner.inspect_images([], "object_1", "can")["status"], "on_table")
+        self.assertEqual(called, ["basket_zoom", "basket_wrist"])

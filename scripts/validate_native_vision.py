@@ -129,17 +129,17 @@ def run(args) -> None:
         scenes = {int(s["source_task"].rsplit("-", 1)[1]): s["objects"] for s in tomllib.load(handle)["scenes"]}
     args.output.mkdir(parents=True, exist_ok=False)
     calibration = panel(args.run, scenes, range(15, 25), 2)
-    holdout_start = 32 if args.supplemental or args.exemplars else 25
+    holdout_start = 32 if args.supplemental or args.exemplars or args.consensus else 25
     report = {
         "source": str(args.run), "calibration_indices": [15, 24], "holdout_indices": [holdout_start, 49],
         "project_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True).strip(),
         "calibration": {}, "gate_passed": False,
     }
     references = None
-    if args.exemplars:
+    if args.exemplars or args.consensus:
         report["references"] = create_references(args.run, args.output)
         references = load_references(args.output, report["references"])
-        models = [("qwen3_vl_4b_instruct", args.qwen3, EXEMPLAR_STRATEGIES)]
+        models = [("qwen3_vl_4b_instruct", args.qwen3, ("basket_consensus",) if args.consensus else EXEMPLAR_STRATEGIES)]
     elif args.supplemental:
         models = [("qwen3_vl_4b_instruct", args.qwen3, tuple(SUPPLEMENTAL_VIEWS))]
     elif args.qwen3 is not None:
@@ -221,8 +221,10 @@ if __name__ == "__main__":
     strategies.add_argument("--wrist", action="store_true")
     strategies.add_argument("--confidence", action="store_true")
     strategies.add_argument("--qwen3", type=Path)
-    parser.add_argument("--supplemental", action="store_true")
-    parser.add_argument("--exemplars", action="store_true")
+    vision_inputs = parser.add_mutually_exclusive_group()
+    vision_inputs.add_argument("--supplemental", action="store_true")
+    vision_inputs.add_argument("--exemplars", action="store_true")
+    vision_inputs.add_argument("--consensus", action="store_true")
     parser.add_argument("--sim-python", type=Path)
     parser.add_argument("--roboenv", type=Path)
     parser.add_argument("--replay-workers", type=int, choices=range(1, 9), default=5)
@@ -231,6 +233,6 @@ if __name__ == "__main__":
         parser.error("this validation mode requires --qwen")
     if args.supplemental and any(value is None for value in (args.qwen3, args.sim_python, args.roboenv)):
         parser.error("supplemental views require --qwen3, --sim-python and --roboenv")
-    if args.exemplars and (args.qwen3 is None or args.supplemental):
-        parser.error("exemplars require --qwen3 and cannot be combined with --supplemental")
+    if (args.exemplars or args.consensus) and args.qwen3 is None:
+        parser.error("exemplars and consensus require --qwen3")
     run(args)
