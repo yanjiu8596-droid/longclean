@@ -15,7 +15,7 @@ from replay_native_video import replay
 from run_native_methods import METHODS, jobs_for, read_jsonl
 
 
-CONDITION_FIELDS = ("init_state_sha256", "bddl_sha256", "model", "step_budget", "chunk_horizon")
+CONDITION_FIELDS = ("init_state_sha256", "bddl_sha256", "model", "step_budget", "chunk_horizon", "supplemental_camera")
 
 
 def summarize(rows):
@@ -129,7 +129,9 @@ def finalize(args):
                 source = formal / artifact
                 selected = {field: example[field] for field in ("run", "artifact", "steps", "method", "scene", "seed", "init")}
                 manifest["examples"].append(selected)
-                for name in EPISODE_FILES:
+                camera = example["supplemental_camera"]
+                views = (f"initial-{camera}.png", f"final-{camera}.png") if camera else ()
+                for name in (*EPISODE_FILES, *views):
                     if (source / name).is_file():
                         add(f"episodes/{artifact}/{name}", (source / name).read_bytes())
                 output = args.output / "replays" / artifact

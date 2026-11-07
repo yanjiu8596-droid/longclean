@@ -73,6 +73,7 @@ def inspect_episode(job, artifact, code, elapsed, commit):
         **{name: episode.get(name) for name in (
             "success", "steps", "step_budget", "chunk_horizon", "init_state_sha256", "bddl_sha256",
             "vla_calls", "visual_calls", "model", "vision", "project_commit", "terminal_reason", "error",
+            "supplemental_camera",
         )},
     }
     if not completed:
@@ -106,7 +107,7 @@ def paired(rows, count):
         if row["method"] in by_method:
             return False
         by_method[row["method"]] = tuple(row[k] for k in (
-            "init_state_sha256", "bddl_sha256", "model", "step_budget", "chunk_horizon",
+            "init_state_sha256", "bddl_sha256", "model", "step_budget", "chunk_horizon", "supplemental_camera",
         ))
     return (
         len(conditions) == count

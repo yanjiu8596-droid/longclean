@@ -197,6 +197,19 @@ def episode(args: argparse.Namespace) -> dict:
         "--roboenv", str(args.roboenv), "--output", str(output),
         "--seed", str(args.seed), "--init-index", str(args.init_index), "--scene", str(args.scene),
     ]
+    visual_provider = None
+    visual_path = None
+    supplemental_camera = None
+    if args.fair_methods and args.visual_validation is not None:
+        sys.path.insert(0, str(PROJECT / "src"))
+        from native_method_schedule import accepted_visual_provider
+
+        visual_path, visual_provider = accepted_visual_provider(args.visual_validation, PROJECT, args.workspace)
+        supplemental_camera = visual_provider["supplemental_camera"]
+        if supplemental_camera:
+            worker_command.extend(("--extra-view", supplemental_camera))
+    if args.fair_methods:
+        record["supplemental_camera"] = supplemental_camera
 
     def read_observation(instruction, image_label=None):
         with np.load(output / "observation.npz", allow_pickle=False) as obs:
@@ -209,11 +222,16 @@ def episode(args: argparse.Namespace) -> dict:
                 "eef": {key: torch.from_numpy(obs[f"eef_{key}"]).unsqueeze(0) for key in ("pos", "quat")},
                 "gripper": {"qpos": torch.from_numpy(obs["gripper_qpos"]).unsqueeze(0)},
             }
+            supplemental = obs[f"visual_{supplemental_camera}"] if supplemental_camera else None
         batch = processor.observation(batch)
+        if supplemental is not None:
+            batch["visual_rgb"] = supplemental
         if image_label:
             for name in CAMERAS:
                 rgb = batch[f"observation.images.{name}"][0].permute(1, 2, 0)
                 Image.fromarray(rgb.mul(255).round().byte().numpy()).save(output / f"{image_label}-{name}.png")
+            if supplemental is not None:
+                Image.fromarray(supplemental).save(output / f"{image_label}-{supplemental_camera}.png")
         return {**batch, "task": instruction}
 
     def receive(worker):
@@ -230,6 +248,7 @@ def episode(args: argparse.Namespace) -> dict:
                 log.write(json.dumps({
                     **observation, "stage": stage, "frame": record["steps"],
                     "audit_goals": simulator["audit_goals"],
+                    **({"extra_view_sha256": simulator["extra_view_sha256"]} if supplemental_camera else {}),
                 }) + "\n")
 
     try:
@@ -262,17 +281,16 @@ def episode(args: argparse.Namespace) -> dict:
                         scenes = tomllib.load(settings)["scenes"]
                     labels = next(scene["objects"] for scene in scenes if scene["source_task"] == record["task_id"])
                     if args.fair_methods:
-                        from native_method_schedule import MethodSchedule, accepted_visual_provider
+                        from native_method_schedule import MethodSchedule
                         from tableclear.state import TaskState
 
                         state = TaskState.from_labels(record["task_id"], labels)
                         if args.method == "closed_loop_vla":
-                            path, provider = accepted_visual_provider(args.visual_validation, PROJECT, args.workspace)
                             planner = VisualPlanner(
-                                path, record["task_id"], labels, fixed=False, strategy=provider["strategy"],
-                                min_basket_margin=provider["min_basket_margin"],
+                                visual_path, record["task_id"], labels, fixed=False, strategy=visual_provider["strategy"],
+                                min_basket_margin=visual_provider["min_basket_margin"],
                             )
-                            record["vision"] = provider
+                            record["vision"] = visual_provider
                             record_visual(planner.inventory(obs), initial, "inventory")
                             state = planner.controller.state
                         schedule = MethodSchedule(args.method, state, args.steps, args.chunk_steps)
@@ -312,7 +330,8 @@ def episode(args: argparse.Namespace) -> dict:
                         record["chunk_horizon"] = horizon
                     if schedule is None:
                         count = min(horizon, args.steps - record["steps"])
-                    actions = predict_chunk(service, {**obs, "task": instruction})[:count]
+                    policy_obs = {key: value for key, value in obs.items() if key != "visual_rgb"}
+                    actions = predict_chunk(service, {**policy_obs, "task": instruction})[:count]
                     worker.stdin.write(json.dumps(actions, allow_nan=False) + "\n")
                     worker.stdin.flush()
                     result = receive(worker)

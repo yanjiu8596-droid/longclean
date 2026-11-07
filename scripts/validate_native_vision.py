@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -12,6 +13,7 @@ import sys
 import tomllib
 
 from probe_native_vision import PROJECT, TARGETS, VisualPlanner
+from native_visual import SUPPLEMENTAL_VIEWS
 
 
 def panel(run: Path, scenes: dict, indices: range, count: int) -> dict:
@@ -37,7 +39,24 @@ def panel(run: Path, scenes: dict, indices: range, count: int) -> dict:
     raise ValueError(f"insufficient independent samples in indices {indices.start}–{indices.stop - 1}")
 
 
-def evaluate(planner, cases: dict, strategy: str) -> tuple[dict, list]:
+def replay_views(args, cases, split, cameras):
+    from capture_native_views import capture
+
+    jobs = {folder.name: folder for group in cases.values() for _, folder in group.values()}
+    root = args.output / "views" / split
+    root.mkdir(parents=True)
+
+    def render(folder):
+        result = capture(folder, root / folder.name, args.sim_python, args.roboenv, cameras)
+        print(json.dumps({"split": split, "replayed_views": result}), flush=True)
+
+    with ThreadPoolExecutor(max_workers=args.replay_workers) as executor:
+        for _ in executor.map(render, jobs.values()):
+            pass
+    return root
+
+
+def evaluate(planner, cases: dict, strategy: str, supplemental: Path | None = None) -> tuple[dict, list]:
     from PIL import Image
 
     planner.strategy = strategy
@@ -45,6 +64,8 @@ def evaluate(planner, cases: dict, strategy: str) -> tuple[dict, list]:
     for (scene, label, expected), samples in sorted(cases.items()):
         for row, folder in samples.values():
             paths = [folder / f"final-camera{i}.png" for i in (1, 2)]
+            if strategy in SUPPLEMENTAL_VIEWS:
+                paths.append(supplemental / folder.name / f"{SUPPLEMENTAL_VIEWS[strategy][0]}.png")
             images = []
             for path in paths:
                 with Image.open(path) as source:
@@ -107,12 +128,15 @@ def run(args) -> None:
         scenes = {int(s["source_task"].rsplit("-", 1)[1]): s["objects"] for s in tomllib.load(handle)["scenes"]}
     args.output.mkdir(parents=True, exist_ok=False)
     calibration = panel(args.run, scenes, range(15, 25), 2)
+    holdout_start = 32 if args.supplemental else 25
     report = {
-        "source": str(args.run), "calibration_indices": [15, 24], "holdout_indices": [25, 49],
+        "source": str(args.run), "calibration_indices": [15, 24], "holdout_indices": [holdout_start, 49],
         "project_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True).strip(),
         "calibration": {}, "gate_passed": False,
     }
-    if args.qwen3 is not None:
+    if args.supplemental:
+        models = [("qwen3_vl_4b_instruct", args.qwen3, tuple(SUPPLEMENTAL_VIEWS))]
+    elif args.qwen3 is not None:
         models = [("qwen3_vl_4b_instruct", args.qwen3, ("basket_zoom", "basket_wrist", "basket_guard"))]
         if args.qwen is not None:
             models.insert(0, ("qwen2_5_vl_3b_instruct", args.qwen, ("basket_zoom",)))
@@ -134,13 +158,16 @@ def run(args) -> None:
         temp.replace(path)
 
     candidates = {}
+    supplemental = None
+    if args.supplemental:
+        supplemental = replay_views(args, calibration, "calibration", [camera for camera, _ in SUPPLEMENTAL_VIEWS.values()])
     for model_id, path, strategies in models:
         pin = model_pin(path, model_id)
         planner = VisualPlanner(path, "vision-validation", ["probe target"], fixed=False)
         for strategy in strategies:
-            scored = args.confidence or (args.qwen3 is not None and strategy == "basket_zoom")
+            scored = args.supplemental or args.confidence or (args.qwen3 is not None and strategy == "basket_zoom")
             planner.min_basket_margin = 0.0 if scored else None
-            score, records = evaluate(planner, calibration, strategy)
+            _, records = evaluate(planner, calibration, strategy, supplemental)
             for margin in (0, 0.5, 1, 2, 3, 4, 5) if scored else (None,):
                 key = f"{model_id}/{strategy}" + (f"@margin={margin}" if margin is not None else "")
                 adjusted = records if margin is None else filter_margin(records, margin)
@@ -162,11 +189,14 @@ def run(args) -> None:
     _, model_id, path, strategy, margin = candidates[winner]
     report.update(status="validating_holdout", selected=winner)
     save()
-    holdout = panel(args.run, scenes, range(25, 50), 4)
+    holdout = panel(args.run, scenes, range(holdout_start, 50), 4)
+    if args.supplemental:
+        supplemental = replay_views(args, holdout, "holdout", [SUPPLEMENTAL_VIEWS[strategy][0]])
     planner = VisualPlanner(path, "vision-validation", ["probe target"], fixed=False, min_basket_margin=margin)
-    score, records = evaluate(planner, holdout, strategy)
+    score, records = evaluate(planner, holdout, strategy, supplemental)
     report["holdout"] = {
         "model": model_pin(path, model_id), "strategy": strategy, "min_basket_margin": margin, "score": score, "records": records,
+        "supplemental_camera": SUPPLEMENTAL_VIEWS[strategy][0] if args.supplemental else None,
     }
     report["gate_passed"] = qualified(score, holdout=True)
     report["status"] = "passed" if report["gate_passed"] else "holdout_failed"
@@ -183,7 +213,13 @@ if __name__ == "__main__":
     strategies.add_argument("--wrist", action="store_true")
     strategies.add_argument("--confidence", action="store_true")
     strategies.add_argument("--qwen3", type=Path)
+    parser.add_argument("--supplemental", action="store_true")
+    parser.add_argument("--sim-python", type=Path)
+    parser.add_argument("--roboenv", type=Path)
+    parser.add_argument("--replay-workers", type=int, choices=range(1, 9), default=5)
     args = parser.parse_args()
     if (args.grounded or args.wrist or args.confidence) and args.qwen is None:
         parser.error("this validation mode requires --qwen")
+    if args.supplemental and any(value is None for value in (args.qwen3, args.sim_python, args.roboenv)):
+        parser.error("supplemental views require --qwen3, --sim-python and --roboenv")
     run(args)

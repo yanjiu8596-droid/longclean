@@ -27,6 +27,10 @@ OBJECT_APPEARANCE = {
     "cream cheese box": "small flat light-blue and white rectangular carton",
     "butter": "small thin orange-red and yellow rectangular carton",
 }
+SUPPLEMENTAL_VIEWS = {
+    "front_zoom": ("frontview", (0.50, 0.24, 0.89, 0.61)),
+    "paper_zoom": ("paperview", (0.50, 0.42, 0.87, 0.79)),
+}
 
 
 class VisualPlanner:
@@ -57,6 +61,8 @@ class VisualPlanner:
         for camera in ("camera1", "camera2"):
             frame = observation[f"observation.images.{camera}"][0].permute(1, 2, 0)
             images.append(Image.fromarray(frame.mul(255).round().byte().numpy()))
+        if self.strategy in SUPPLEMENTAL_VIEWS:
+            images.append(Image.fromarray(observation["visual_rgb"]))
         return self.inspect_images(images, target.id, target.label)
 
     def inspect_images(self, images: list, target_id: str, label: str) -> dict:
@@ -67,7 +73,24 @@ class VisualPlanner:
             "4 = not visible or cannot tell. Use 4 if unsure."
         )
         statuses = STATUSES
-        if self.strategy in {"appearance", "basket_zoom", "basket_wrist", "basket_guard"}:
+        if self.strategy in SUPPLEMENTAL_VIEWS:
+            from PIL import Image
+
+            _, bounds = SUPPLEMENTAL_VIEWS[self.strategy]
+            supplemental = images[2]
+            crop = supplemental.crop(tuple(
+                round(value * dimension) for value, dimension in zip(bounds, (*supplemental.size, *supplemental.size))
+            )).resize((448, 448), Image.Resampling.BICUBIC)
+            images = [images[0], crop]
+            question = (
+                f"Find the {OBJECT_APPEARANCE[label]}. The first image shows the full worktop. "
+                "The second is a magnified view of the same white-lined wicker basket from a different angle. "
+                "Determine where the matching item is. Use 1 for resting inside the lining, "
+                "2 for outside the basket, 3 for pinched by the robot fingers, or 4 if fully hidden. "
+                "An object suspended above the rim or a different item inside the basket does not count as 1. "
+                "Answer with one digit."
+            )
+        elif self.strategy in {"appearance", "basket_zoom", "basket_wrist", "basket_guard"}:
             appearance = OBJECT_APPEARANCE[label]
             wrist = images[1]
             images = images[:1]
