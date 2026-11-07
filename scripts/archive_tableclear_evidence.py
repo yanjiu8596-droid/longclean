@@ -25,6 +25,16 @@ HISTORICAL = {
 }
 
 
+def best_examples(rows):
+    examples = {}
+    for row in rows:
+        if row["completed"] and row["phase"] == "direct_horizon_diagnostics" and row["success"] is True:
+            current = examples.get(row["scene"])
+            if current is None or (row["steps"], row["run"]) < (current["steps"], current["run"]):
+                examples[row["scene"]] = row
+    return [examples[scene] for scene in sorted(examples)]
+
+
 def archive(run: Path, output: Path, *, final: bool, replays: Path | None) -> dict:
     summary_bytes = (run / "summary.json").read_bytes()
     summary = json.loads(summary_bytes)
@@ -37,13 +47,7 @@ def archive(run: Path, output: Path, *, final: bool, replays: Path | None) -> di
     if len({row["run"] for row in completed}) != len(completed):
         raise ValueError("duplicate completed runs in the result index")
 
-    examples = {}
-    for row in completed:
-        if row["phase"] == "direct_horizon_diagnostics" and row["success"] is True:
-            current = examples.get(row["scene"])
-            if current is None or (row["steps"], row["run"]) < (current["steps"], current["run"]):
-                examples[row["scene"]] = row
-    selected = [examples[scene] for scene in sorted(examples)]
+    selected = best_examples(completed)
     manifest = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(), "run": run.name,
         "status": summary["status"], "final_archive": final, "indexed_rows": len(rows),
