@@ -98,7 +98,9 @@ def run(args) -> None:
         "project_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True).strip(),
         "calibration": {}, "gate_passed": False,
     }
-    if args.grounded:
+    if args.wrist:
+        models = [("qwen2_5_vl_3b_instruct", args.qwen, ("basket_wrist", "basket_guard"))]
+    elif args.grounded:
         models = [("qwen2_5_vl_3b_instruct", args.qwen, ("appearance", "basket_zoom"))]
     else:
         models = [("smolvlm2_500m_video_instruct", args.smol, ("original", "external", "dual"))]
@@ -147,8 +149,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("run", "output", "smol", "qwen"):
         parser.add_argument(f"--{name}", type=Path, required=name != "qwen")
-    parser.add_argument("--grounded", action="store_true")
+    strategies = parser.add_mutually_exclusive_group()
+    strategies.add_argument("--grounded", action="store_true")
+    strategies.add_argument("--wrist", action="store_true")
     args = parser.parse_args()
-    if args.grounded and args.qwen is None:
-        parser.error("--grounded requires --qwen")
+    if (args.grounded or args.wrist) and args.qwen is None:
+        parser.error("--grounded and --wrist require --qwen")
     run(args)

@@ -66,10 +66,11 @@ class VisualPlanner:
             "4 = not visible or cannot tell. Use 4 if unsure."
         )
         statuses = STATUSES
-        if self.strategy in {"appearance", "basket_zoom"}:
+        if self.strategy in {"appearance", "basket_zoom", "basket_wrist", "basket_guard"}:
             appearance = OBJECT_APPEARANCE[label]
+            wrist = images[1]
             images = images[:1]
-            if self.strategy == "basket_zoom":
+            if self.strategy != "appearance":
                 from PIL import Image
 
                 view = images[0]
@@ -79,13 +80,27 @@ class VisualPlanner:
                 ))
                 closeup = view.crop(box).resize((336, 504), Image.Resampling.BICUBIC)
                 images.append(closeup)
+            if self.strategy in {"basket_wrist", "basket_guard"}:
+                images.append(wrist)
             question = (
                 f"Find the {appearance}. The white-lined wicker basket is on the far left of the first image. "
-                + ("The second image enlarges the basket. " if self.strategy == "basket_zoom" else "")
+                + ("The second image enlarges the basket. " if self.strategy != "appearance" else "")
+                + ("The third image looks down from the gripper and can distinguish an item held above "
+                   "the basket from an item resting inside. " if len(images) == 3 else "")
                 + "Where is the named item? Use 1 for inside the white-lined basket, 2 for outside the basket "
                 "on the brown worktop, 3 for held between the robot fingers, or 4 for fully hidden. "
                 "Answer with one digit."
             )
+            if self.strategy == "basket_guard":
+                question = (
+                    f"Locate only the {appearance}. Image 1 shows the entire worktop, image 2 is a magnified "
+                    "crop around the white-lined wicker basket, and image 3 is the wrist camera. "
+                    "Check the full worktop for the matching item first. Answer 2 if the target is on the "
+                    "worktop outside the basket. Answer 3 if it is pinched in the gripper, even directly above "
+                    "the basket. Answer 1 only when its matching shape and color are visible resting inside "
+                    "the white lining. A different item inside the basket does not count. If neither view "
+                    "identifies the named item, answer 4. Output exactly one digit."
+                )
         elif self.strategy != "original":
             if self.strategy == "external":
                 images = images[:1]
