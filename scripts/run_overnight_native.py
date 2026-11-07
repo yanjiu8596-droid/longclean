@@ -30,20 +30,27 @@ def visual_audit(output: Path) -> dict:
     mismatches = 0
     positives = 0
     false_positives = 0
+    abstentions = 0
+    invalid_completions = 0
     for row in rows:
         actual = next((g["satisfied"] for g in row["audit_goals"] if g["predicate"][1] == TARGETS[row["target"]]), None)
-        if actual is None or (row["status"] == "in_basket") != actual:
-            mismatches += 1
-        positives += actual is True and row["status"] == "in_basket"
-        false_positives += actual is False and row["status"] == "in_basket"
+        complete = row["status"] == "in_basket"
+        position = row.get("in_basket_region", None if row["status"] == "unknown" else complete)
+        released = row.get("release_confirmed", complete)
+        mismatches += actual is None or position is not actual
+        abstentions += position is None
+        invalid_completions += complete and (released is not True or position is not True)
+        positives += actual is True and position is True and complete and released is True
+        false_positives += actual is False and (position is True or complete)
     return {
         "inventory": sum(row["stage"] == "inventory" for row in rows),
         "progress": sum(row["stage"] == "progress" for row in rows),
         "unparsed": sum(not row["parsed"] for row in rows),
-        "abstentions": sum(row["status"] == "unknown" for row in rows),
+        "abstentions": abstentions,
         "basket_mismatches": mismatches,
         "confirmed_positives": positives,
         "false_positives": false_positives,
+        "invalid_completions": invalid_completions,
     }
 
 

@@ -13,6 +13,7 @@ from native_rgbd_placement import RGBD_RELEASE, has_deposit
 from native_visual import VisualPlanner
 from run_native_methods import jobs_for
 from run_native_osc import ReleaseSampling
+from run_overnight_native import visual_audit
 from tableclear.state import TaskState
 
 
@@ -70,6 +71,20 @@ class NativeMethodScheduleTests(unittest.TestCase):
         schedule.action(0, "")
         schedule.apply_visual(decision["status"], 12)
         self.assertEqual(schedule.action(12, "")[0], "object_1")
+
+    def test_runtime_audit_separates_position_and_release(self):
+        base = {"target": "tomato sauce", "stage": "progress", "parsed": True, "in_basket_region": True,
+                "audit_goals": [{"predicate": ["in", "tomato_sauce_1", "basket"], "satisfied": True}]}
+        rows = [{**base, "status": "grasped", "release_confirmed": False},
+                {**base, "status": "in_basket", "release_confirmed": True},
+                {**base, "status": "in_basket", "release_confirmed": False}]
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp)
+            (output / "visual.jsonl").write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
+            scores = visual_audit(output)
+        self.assertEqual(scores["basket_mismatches"], 0)
+        self.assertEqual(scores["confirmed_positives"], 1)
+        self.assertEqual(scores["invalid_completions"], 1)
 
     def schedule(self, method):
         return MethodSchedule(method, TaskState.from_labels("scene", ["can", "box"]), 520, 10)

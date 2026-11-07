@@ -96,6 +96,7 @@ def smoke_passed(row):
     return bool(
         row["completed"] and audit["inventory"] == 2 and audit["progress"] > 0
         and audit["unparsed"] == audit["abstentions"] == audit["basket_mismatches"] == 0
+        and audit.get("invalid_completions", 0) == 0
         and audit["confirmed_positives"] > 0 and row["visual_switches"] > 0
     )
 
@@ -251,7 +252,7 @@ def run(args):
         audits = [row["visual"] for row in pilot if "visual" in row]
         if (
             not complete or not paired(pilot, 9)
-            or any(audit["false_positives"] or audit["unparsed"] for audit in audits)
+            or any(audit["false_positives"] or audit["unparsed"] or audit.get("invalid_completions", 0) for audit in audits)
             or not any(row.get("visual_switches") for row in pilot)
         ):
             summary["status"] = "pilot_gate_failed"
