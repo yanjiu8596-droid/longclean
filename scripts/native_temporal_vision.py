@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import Counter
 
 from native_visual import OBJECT_APPEARANCE, STATUSES
-from native_rgbd_placement import RGBD_STRATEGIES, geometry_evidence, has_deposit, held_identity, wall_still_visible
+from native_rgbd_placement import (
+    RGBD_RELEASE, RGBD_STRATEGIES, entering_basket, geometry_evidence, has_deposit, held_identity, wall_still_visible,
+)
 from tableclear.models import VerdictStatus
 
 
@@ -65,6 +68,7 @@ class TemporalVision:
         self.identities = {}
         self.held_identities = {}
         self.current_holds = {}
+        self.grasp_votes = {}
 
     def observe(self, step: int, images: list, commands: list[float], hashes: list[str], gripper_qpos, geometry=None) -> None:
         if step != len(self.commands) + len(commands) or self.frames and step <= self.frames[-1].step:
@@ -148,6 +152,49 @@ class TemporalVision:
             and frame.geometry["eef"][1] < 0.17 and frame.geometry["eef"][2] > 0.51
         ), before)
 
+    def vote_grasp(self, planner, released, before):
+        previous = max((step for step in release_steps(self.commands) if step < released), default=0)
+        # Stay within one continuous close command and space votes across the transport.
+        closed_at = next((i for i in range(before.step - 1, previous - 1, -1)
+                          if self.commands[i] <= -0.5), previous - 1) + 1
+        full_width = self.frames[0].gripper_width
+        views = []
+        for frame in reversed(self.frames):
+            if not closed_at < frame.step <= before.step or views and views[-1].step - frame.step < 5:
+                continue
+            if (0.018 < frame.gripper_width < 0.94 * full_width
+                    and frame.geometry["eef"][1] < 0.17 and frame.geometry["eef"][2] > 0.51):
+                views.append(frame)
+            if len(views) == 3:
+                break
+        votes, calls = [], 0
+        for frame in views:
+            if frame.step not in self.grasp_votes:
+                self.grasp_votes[frame.step], count = held_identity(planner, frame)
+                calls += count
+            votes.append({**self.grasp_votes[frame.step], "frame": frame.step, "image_sha256": frame.hashes})
+        labels = Counter(row["label"] for row in votes if row["parsed"] and row["label"] is not None)
+        label = next((label for label, count in labels.items() if count >= 2), None)
+        return {"label": label, "parsed": all(row["parsed"] for row in votes), "votes": votes}, calls
+
+    def pending_placement(self, planner, label, current, invalidated_through):
+        # Look only at the ongoing opening run, never a frame after the decision.
+        count = next((i for i, value in enumerate(reversed(self.commands)) if value > -0.5), len(self.commands))
+        released = current.step - count + 1
+        if not 1 <= count <= 12 or released <= max(3, invalidated_through):
+            return None, 0
+        if not all(value >= 0.5 for value in self.commands[released - 4:released - 1]):
+            return None, 0
+        before = next((frame for frame in reversed(self.frames) if frame.step < released), None)
+        if before is None or self.open_after(before, current, rgbd=True) or basket_difference(self.frames[0], current) >= 22:
+            return None, 0
+        evidence = entering_basket(before, current, label)
+        if evidence is None or not evidence["supported"]:
+            return None, 0
+        identity, calls = self.vote_grasp(planner, released, before)
+        return {"frame": current.step, "release_step": released, "before": before.step, "identity": identity,
+                "in_region": identity["parsed"] and identity["label"] == label, "geometry": evidence}, calls
+
     def current_hold(self, planner):
         current = self.frames[-1]
         if current.step in self.current_holds:
@@ -171,7 +218,7 @@ class TemporalVision:
         self.current_holds[current.step] = result
         return result, calls
 
-    def depth_event(self, planner, target_id, label, released, before, after, current, use_static):
+    def depth_event(self, planner, target_id, label, released, before, after, current, use_static, *, multi_view=False):
         observations = []
         eligible = [
             frame for frame in self.frames
@@ -197,14 +244,17 @@ class TemporalVision:
                 break
         identity = self.held_identities.get(released)
         if (confirmed is not None or use_static and len(stable_frames) >= 2) and identity is None:
-            view = self.grasp_view(released, before)
-            identity, count = held_identity(planner, view)
-            calls += count
-            if identity["label"] is None and view.step != before.step:
-                view = before
+            if multi_view:
+                identity, count = self.vote_grasp(planner, released, before)
+            else:
+                view = self.grasp_view(released, before)
                 identity, count = held_identity(planner, view)
-                calls += count
-            identity = {**identity, "frame": view.step, "image_sha256": view.hashes}
+                if identity["label"] is None and view.step != before.step:
+                    calls += count
+                    view = before
+                    identity, count = held_identity(planner, view)
+                identity = {**identity, "frame": view.step, "image_sha256": view.hashes}
+            calls += count
             self.held_identities[released] = identity
         if identity is None or identity["label"] != label or not identity["parsed"]:
             confirmed = None
@@ -284,6 +334,7 @@ class TemporalVision:
         status = current_vote["status"]
         initial_delta = basket_difference(self.frames[0], current)
         rgbd = strategy in RGBD_STRATEGIES
+        release_aware = strategy == RGBD_RELEASE
         basket_valid = wall_still_visible(self.frames[0], current) if rgbd else initial_delta < 60
         evidence = []
         accepted = None
@@ -295,14 +346,15 @@ class TemporalVision:
                 if rgbd:
                     depth, count = self.depth_event(
                         planner, target_id, label, released, before, after, current,
-                        use_static=strategy == "rgbd_hybrid" and status == "in_basket",
+                        use_static=strategy in ("rgbd_hybrid", RGBD_RELEASE) and status == "in_basket",
+                        multi_view=release_aware,
                     )
                     calls += count
                     evidence.append(depth)
                     if depth["confirmed"] is not None:
                         accepted = depth["confirmed"]
                         break
-                    if strategy == "rgbd_placement" or depth["held_identity"] is not None:
+                    if strategy in ("rgbd_placement", RGBD_RELEASE) or depth["held_identity"] is not None:
                         continue
                 visible_lining = lining_fraction(after)
                 if visible_lining < 0.03:
@@ -333,12 +385,21 @@ class TemporalVision:
             calls += count
             if holding is not None and holding["parsed"] and holding["label"] == label:
                 status, reason = "grasped", "target_still_held"
+        pending = None
+        if release_aware and basket_valid and accepted is None and current_vote["status"] == "in_basket":
+            pending, count = self.pending_placement(planner, label, current, invalidated_through)
+            calls += count
+            if pending is not None and pending["in_region"]:
+                status, reason = "grasped", "inside_basket_release_unconfirmed"
         return {
             "target_id": target_id, "target": label, "status": status, "inferences": calls,
             "parsed": current_vote["parsed"] and all(
                 item["parsed"] and item.get("identity", {}).get("parsed", True) for item in evidence
-            ) and (holding is None or holding["parsed"]),
+            ) and (holding is None or holding["parsed"]) and (pending is None or pending["identity"]["parsed"]),
             "raw": reason, "current": current_vote, "history": evidence,
             "current_hold": holding,
             "initial_wall_difference": initial_delta, "confirmed_frame": accepted,
+            **({"in_basket_region": True if accepted is not None or pending and pending["in_region"] else
+                False if status in ("on_table", "grasped") else None,
+                "release_confirmed": accepted is not None, "pending_placement": pending} if release_aware else {}),
         }

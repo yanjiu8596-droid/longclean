@@ -5,7 +5,8 @@ from __future__ import annotations
 from native_visual import OBJECT_APPEARANCE
 
 
-RGBD_STRATEGIES = ("rgbd_placement", "rgbd_hybrid")
+RGBD_RELEASE = "rgbd_release"
+RGBD_STRATEGIES = ("rgbd_placement", "rgbd_hybrid", RGBD_RELEASE)
 
 
 def world_points(depth, intrinsic, extrinsic):
@@ -138,6 +139,26 @@ def has_deposit(evidence, *, upright):
     return upright and evidence["fixed_foreground_pixels"] >= 45 or any(
         new - old >= 45 for old, new in zip(before, after, strict=True)
     )
+
+
+def entering_basket(before, current, label):
+    import numpy as np
+
+    # This color is distinct from the other scene 01 target. The two blue scene 08 labels share ink.
+    if label != "tomato sauce":
+        return None
+    center = current.geometry["eef"]
+    evidence = geometry_evidence(before, current, label)
+    if evidence is None:
+        return None
+    near_counts = []
+    for camera, image in enumerate(current.images):
+        offset = cloud(current, camera) - center
+        near = (np.linalg.norm(offset[..., :2], axis=-1) < 0.055) & (offset[..., 2] > -0.12) & (offset[..., 2] < 0.015)
+        near_counts.append(int(np.count_nonzero(near & basket_pixels(current, camera, center[:2]) & color_mask(image, label))))
+    old = evidence["target_color_pixels"][0]
+    return {**evidence, "near_gripper_in_basket": near_counts,
+            "supported": any(new - prior >= 24 for prior, new in zip(old, near_counts, strict=True))}
 
 
 def wall_still_visible(reference, current):

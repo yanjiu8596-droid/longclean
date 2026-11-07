@@ -92,4 +92,5 @@ def accepted_visual_provider(
         "min_basket_margin": provider.get("min_basket_margin"),
         "supplemental_camera": provider.get("supplemental_camera"),
         "references": report.get("references"),
+        **({"logo_templates": report["logo_templates"]} if report.get("logo_templates") else {}),
     }

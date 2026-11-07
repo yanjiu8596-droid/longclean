@@ -10,6 +10,7 @@ import subprocess
 
 from validate_native_vision import PROJECT, VisualPlanner, model_pin, panel, qualified, summarize
 from native_temporal_vision import TEMPORAL_STRATEGIES, TemporalVision
+from native_rgbd_placement import RGBD_RELEASE
 from native_visual_references import create_references, load_references
 from native_visual_windows import UNUSED, fresh_windows
 from replay_native_frames import DEVELOPMENT, HOLDOUT, replay_panel, scene_labels
@@ -18,7 +19,7 @@ from replay_native_frames import DEVELOPMENT, HOLDOUT, replay_panel, scene_label
 MODEL = "qwen3_vl_4b_instruct"
 
 
-def trajectory(path: Path, expected_init: str, decision_step: int | None = None) -> tuple[TemporalVision, str]:
+def trajectory(path: Path, expected_init: str, decision_step: int | None = None, *, dense: bool = True) -> tuple[TemporalVision, str]:
     import numpy as np
     from PIL import Image
 
@@ -38,6 +39,8 @@ def trajectory(path: Path, expected_init: str, decision_step: int | None = None)
             step = int(step)
             if decision_step is not None and step > decision_step:
                 break
+            if not dense and step % 10 and step not in (decision_step, verified["steps"]):
+                continue
             geometry = None
             if sensor_arrays is not None:
                 geometry = {
@@ -51,14 +54,17 @@ def trajectory(path: Path, expected_init: str, decision_step: int | None = None)
     return history, sample_hash
 
 
-def evaluate(planner, cases, frames_dir, strategies, split):
+def evaluate(planner, cases, frames_dir, strategies, split, *, logo=None):
     records = {strategy: [] for strategy in strategies}
     for (scene, label, expected), samples in sorted(cases.items()):
         for row, folder in samples.values():
-            history, sample_hash = trajectory(frames_dir / folder.name, row["init_state_sha256"], row.get("decision_step"))
             for strategy in strategies:
+                if logo is not None:
+                    planner.held_logo = logo if strategy == RGBD_RELEASE else None
+                history, sample_hash = trajectory(frames_dir / folder.name, row["init_state_sha256"], row.get("decision_step"),
+                                                  dense=strategy == RGBD_RELEASE)
                 answer = history.inspect(planner, "probe_target", label, strategy)
-                prediction = None if answer["status"] == "unknown" else answer["status"] == "in_basket"
+                prediction = answer.get("in_basket_region", None if answer["status"] == "unknown" else answer["status"] == "in_basket")
                 records[strategy].append({
                     "scene": scene, "target": label, "run": row["run"], "artifact": folder.name,
                     "seed": row["seed"], "init": row["init"], "init_state_sha256": row["init_state_sha256"],

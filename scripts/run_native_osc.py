@@ -271,6 +271,7 @@ def episode(args: argparse.Namespace) -> dict:
     visual_path = None
     supplemental_camera = None
     use_rgbd = False
+    dense_release = False
     history = None
     confirmed_frames = {}
     invalidated_through = {}
@@ -278,7 +279,7 @@ def episode(args: argparse.Namespace) -> dict:
     if scheduled_methods and args.visual_validation is not None:
         sys.path.insert(0, str(PROJECT / "src"))
         from native_method_schedule import accepted_visual_provider
-        from native_rgbd_placement import RGBD_STRATEGIES
+        from native_rgbd_placement import RGBD_RELEASE, RGBD_STRATEGIES
 
         visual_path, visual_provider = accepted_visual_provider(
             args.visual_validation, PROJECT, args.workspace, runtime_probe=args.vision_runtime_probe,
@@ -289,6 +290,9 @@ def episode(args: argparse.Namespace) -> dict:
         use_rgbd = visual_provider["strategy"] in RGBD_STRATEGIES
         if use_rgbd:
             worker_command.append("--rgbd")
+        dense_release = args.method == "closed_loop_vla" and visual_provider["strategy"] == RGBD_RELEASE
+        if dense_release:
+            worker_command.append("--dense-release")
     if scheduled_methods:
         record["supplemental_camera"] = supplemental_camera
         record["rgbd"] = use_rgbd
@@ -343,8 +347,18 @@ def episode(args: argparse.Namespace) -> dict:
                 }) + "\n")
 
     def observe_history(observation, simulator, commands):
+        start = record["steps"] - len(commands)
+        last = 0
+        for item in simulator.get("release_observations", []):
+            step = item["step"]
+            path = output / f"release-{step}.npz"
+            images, qpos, geometry = read_rgbd_frame(path)
+            history.observe(step, images, commands[last:step - start],
+                            [item["observation_sha256"][name] for name in CAMERAS], qpos, geometry)
+            path.unlink()
+            last = step - start
         history.observe(
-            record["steps"], planner.image_views(observation), commands,
+            record["steps"], planner.image_views(observation), commands[last:],
             [simulator["observation_sha256"][name] for name in CAMERAS],
             observation["observation.state"][0, -2:].tolist(),
             observation.get("visual_geometry"),
@@ -406,6 +420,10 @@ def episode(args: argparse.Namespace) -> dict:
                                 min_basket_margin=visual_provider["min_basket_margin"],
                                 references=load_references(args.visual_validation.parent, references) if references else None,
                             )
+                            if visual_provider.get("logo_templates"):
+                                from native_planar_identity import load_logo
+
+                                planner.held_logo = load_logo(args.visual_validation.parent, visual_provider["logo_templates"])
                             record["vision"] = visual_provider
                             if planner.strategy in (*TEMPORAL_STRATEGIES, *RGBD_STRATEGIES):
                                 history = TemporalVision()
@@ -471,8 +489,9 @@ def episode(args: argparse.Namespace) -> dict:
                     obs = read_observation(instruction)
                     release_ready = False
                     if history is not None:
+                        chunk_start = record["steps"] - executed
                         observe_history(obs, result, [action[-1] for action in actions[:executed]])
-                        release_ready = any(after.step == record["steps"] for _, _, after in history.release_windows(rgbd=use_rgbd))
+                        release_ready = any(after.step > chunk_start for _, _, after in history.release_windows(rgbd=use_rgbd))
                         for completed_target, confirmed in list(confirmed_frames.items()):
                             if not history.confirmation_valid(confirmed, rgbd=use_rgbd):
                                 del confirmed_frames[completed_target]

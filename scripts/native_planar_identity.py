@@ -2,12 +2,28 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
+
 from native_rgbd_placement import cloud
 
 
 CREAM_LABEL = "cream cheese box"
 LOGO_BOUNDS = (96, 130, 161, 213)
 WRIST_BOUNDS = (54, 100, 203, 228)
+
+
+def load_logo(directory, templates):
+    from PIL import Image
+
+    images = []
+    for row in templates:
+        name = row["file"]
+        path = directory / name
+        if path.name != name or sha256(path.read_bytes()).hexdigest() != row["sha256"]:
+            raise ValueError(f"logo template failed verification: {path}")
+        with Image.open(path) as image:
+            images.append(image.convert("RGB"))
+    return PlanarLogo(images)
 
 
 class PlanarLogo:
