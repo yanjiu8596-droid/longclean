@@ -31,8 +31,12 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
     command = [
         str(sim_python), str(Path(__file__).with_name("run_native_osc.py")), "--sim-worker",
         "--output", str(output), "--roboenv", str(roboenv), "--scene", episode["task_id"].rsplit("-", 1)[1],
-        "--seed", str(episode["seed"]), "--init-index", str(episode["init_state_index"]),
+        "--seed", str(episode["seed"]),
     ]
+    if episode.get("initialization") == "libero_seeded_reset":
+        command.append("--sampled-reset")
+    else:
+        command.extend(("--init-index", str(episode["init_state_index"])))
     if rgbd:
         command.append("--rgbd")
     if release_tail:
@@ -71,6 +75,8 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
             try:
                 initial = receive(worker)
                 verify(initial, episode, (*OBSERVATION_FIELDS, "init_state_sha256", "bddl_sha256"))
+                if initial.get("initialization") != episode.get("initialization"):
+                    raise ValueError(f"replay initialization differs: {source}")
                 sample(initial)
                 for row in trace:
                     actions = row["actions"]
@@ -123,6 +129,7 @@ def replay(source: Path, output: Path, sim_python: Path, roboenv: Path, *, rgbd:
         "init_state_sha256": episode["init_state_sha256"], "bddl_sha256": episode["bddl_sha256"],
         "terminal_state_sha256": current["sim_state_sha256"], "official_success": episode["success"],
         "rgbd": rgbd,
+        **({"initialization": episode["initialization"]} if "initialization" in episode else {}),
         **({"dense_release": True} if dense_release else {}),
         **({"diagnostic_tail": tail_records} if tail_records else {}),
         "actions_sha256": sha256((source / "actions.jsonl").read_bytes()).hexdigest(),

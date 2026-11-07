@@ -66,7 +66,7 @@ def simulate(
     output: Path, roboenv: Path, seed: int, init_index: int,
     socket_path: Path | None, steps: int, scene: int, video_path: Path | None = None,
     extra_views: tuple[str, ...] = (), extra_view_frame: int | None = None, rgbd: bool = False,
-    release_tail: bool = False, dense_release: bool = False,
+    release_tail: bool = False, dense_release: bool = False, sampled_reset: bool = False,
 ) -> None:
     # Keep the response pipe separate from native library diagnostics.
     protocol = os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", buffering=1)
@@ -87,7 +87,7 @@ def simulate(
     task = suite.get_task(scene - 1)
     bddl = Path(get_libero_path("bddl_files")) / task.problem_folder / task.bddl_file
     states = suite.get_task_init_states(scene - 1)
-    if not 0 <= init_index < len(states):
+    if not sampled_reset and not 0 <= init_index < len(states):
         raise ValueError(f"init index must be between 0 and {len(states) - 1}")
     encoder = None
     frames = 0
@@ -167,8 +167,11 @@ def simulate(
         env.reset()
         env.seed(seed)
         env.reset()
-        env.set_init_state(states[init_index])
+        if not sampled_reset:
+            env.set_init_state(states[init_index])
         initial_state_hash = hashlib.sha256(env.get_sim_state().tobytes()).hexdigest()
+        if sampled_reset and initial_state_hash in {hashlib.sha256(np.asarray(state).tobytes()).hexdigest() for state in states}:
+            raise RuntimeError("sampled reset collides with a fixed benchmark initial state")
         # Match the pinned LeRobot LIBERO wrapper's settling policy.
         for _ in range(10):
             obs, _, _, _ = env.step([0, 0, 0, 0, 0, 0, -1])
@@ -183,12 +186,15 @@ def simulate(
             control_hz=env.env.control_freq,
             settle_frames=10,
             seed=seed,
-            init_state_index=init_index,
+            init_state_index=None if sampled_reset else init_index,
             init_state_count=len(states),
             success=bool(env.check_success()),
             init_state_sha256=initial_state_hash,
             bddl_sha256=hashlib.sha256(bddl.read_bytes()).hexdigest(),
+            **({"initialization": "libero_seeded_reset"} if sampled_reset else {}),
         )
+        if sampled_reset and any(goal["satisfied"] for goal in initial["audit_goals"]):
+            raise RuntimeError("sampled reset already satisfies a placement goal after settling")
         if video_path is not None:
             encoder = subprocess.Popen([
                 "ffmpeg", "-nostdin", "-loglevel", "error", "-n", "-f", "rawvideo",
@@ -272,6 +278,8 @@ def episode(args: argparse.Namespace) -> dict:
         "--roboenv", str(args.roboenv), "--output", str(output),
         "--seed", str(args.seed), "--init-index", str(args.init_index), "--scene", str(args.scene),
     ]
+    if args.sampled_reset:
+        worker_command.append("--sampled-reset")
     visual_provider = None
     visual_path = None
     supplemental_camera = None
@@ -567,9 +575,13 @@ def main() -> None:
     parser.add_argument("--rgbd", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--release-tail", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--dense-release", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--sampled-reset", action="store_true", help="use LIBERO's seeded reset for visual validation collection")
     args = parser.parse_args()
     if not 1 <= args.steps <= 520:
         parser.error("--steps must be between 1 and 520")
+    if args.sampled_reset and (args.fair_methods or args.vision_runtime_probe or args.socket is not None
+                               or args.method != "direct_vla" or args.init_index != 0):
+        parser.error("sampled resets are only for separate visual validation collection")
     if args.sim_worker:
         if args.video is not None and args.socket is not None:
             parser.error("video recording requires a standalone replay worker")
@@ -580,7 +592,7 @@ def main() -> None:
         simulate(
             args.output, args.roboenv, args.seed, args.init_index, args.socket, args.steps, args.scene,
             args.video, tuple(dict.fromkeys(args.extra_view)), args.extra_view_frame, args.rgbd, args.release_tail,
-            args.dense_release,
+            args.dense_release, args.sampled_reset,
         )
         return
     if args.workspace is None or args.sim_python is None or args.socket is not None or args.video is not None:
