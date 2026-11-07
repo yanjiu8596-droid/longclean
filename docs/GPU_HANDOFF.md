@@ -44,11 +44,10 @@ Before the first simulator launch:
    /root/.local/bin/kinex -p "/ping all"
    ```
 
-These checks establish device connectivity only. Before treating an episode as
-an OSC baseline, complete the native action and observation parity gates in
-[`NATIVE_OSC_AUDIT.md`](NATIVE_OSC_AUDIT.md). The existing `run_vla_subtask`
-still uses IK and absolute joint targets. Do not start the 135-episode matrix
-until action parity, the high-level provider and one full smoke episode pass.
+These checks establish device connectivity for the legacy IK and absolute joint
+target path. The native OSC smoke below exercises the new Kinex backend. The
+high-level provider and a complete closed-loop smoke episode remain prerequisites
+for the 135-episode matrix.
 
 The SSH host or port may change after starting a GPU instance. Update the local
 SSH config accordingly. The dedicated public key may need to be installed again
@@ -82,4 +81,22 @@ reference for the planned Kinex parity test.
 For detached RoboEnv plumbing checks launched with a custom `--run-dir`,
 pass the resulting run directory's `run.json` to `roboenv stop` to use the
 owner socket and retain the terminal evidence.
+
+## Kinex native OSC smoke and replay
+
+```bash
+cd /root/autodl-tmp/longclean
+bash scripts/run_kinex_native_smoke.sh
+```
+
+The script creates a run-local Kinex workspace with the existing robot manifest
+and pinned SmolVLA weights. The tool sends up to ten 7D policy actions through
+the local OSC socket. An independent simulator process then replays the recorded
+actions from the same seed and LIBERO init-state index. `parity.json` reports
+the comparison. Both runs close their simulator processes when finished.
+
+`TABLECLEAR_NATIVE_OSC_SOCKET` selects this backend for `run_vla_subtask`.
+The session advances only on accepted action batches and uses the observation
+frame to reject stale requests. The legacy scheduler remains the default in
+workspaces without that environment variable.
 

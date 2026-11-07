@@ -46,19 +46,14 @@ The model action contract is:
 6D end-effector delta + 1D gripper
 ```
 
-The dimensions and ordering must be checked against the native controller and
-the running RoboEnv task. The existing bridge sends `space="pose_delta"` and
-uses IK followed by absolute joint writes. This is the historical integration
-path, not a native OSC-equivalent executor. See
-[`NATIVE_OSC_AUDIT.md`](NATIVE_OSC_AUDIT.md) before changing or evaluating it.
+With `TABLECLEAR_NATIVE_OSC_SOCKET` configured, Kinex passes each postprocessed
+7D action directly to LIBERO's relative `OSC_POSE` controller at 20 Hz. The
+session owns action validation, time, and the terminal verdict.
 
-The existing bridge applies translation scale `0.05 m`, rotation scale
-`0.5 rad`, and clips the gripper command to `[-1, 1]`. These constants do not
-make IK/joint-position execution equivalent to OSC. A native path must pass the
-postprocessed 7D policy action to LIBERO's `OSC_POSE` controller without this
-external physical-unit scaling or IK, and preserve native stepping semantics.
-The current tool/script default is 30 Hz while the pinned RoboEnv backend uses
-20 Hz; scheduling and executed frame counts still need to be aligned.
+The legacy backend converts `pose_delta` through IK into absolute joint
+targets. Its scheduler uses a 30 Hz default and applies the legacy scaling and
+gripper clipping. The original audit records the protocol differences.
+[`NATIVE_OSC_AUDIT.md`](NATIVE_OSC_AUDIT.md)
 
 ## `run_vla_subtask`
 
@@ -71,39 +66,34 @@ Inputs:
 }
 ```
 
-Output:
+Selected fields from a native result:
 
 ```json
 {
   "execution_status": "completed",
-  "action_space": "pose_delta",
+  "control_protocol": "libero_native_osc",
   "actions_submitted": 10,
-  "ik_failure": false,
-  "images": ["head.png", "wrist.png"],
-  "robot_state": [0.0]
+  "frame": 10,
+  "duration_s": 0.5,
+  "terminal": false
 }
 ```
 
-The existing tool is intended to:
-
-1. read fresh observations;
-2. call the SmolVLA model device;
-3. validate the action chunk;
-4. send it through `run_policy`;
-5. wait on the simulator clock;
-6. read fresh feedback;
-7. return images and structured execution evidence.
-
-This interface's `completed` status means execution completed, not task success.
-The native OSC replacement has not been implemented or accepted.
+The native tool reads the current frame, calls SmolVLA with both camera images
+and the model state, and submits the bounded action batch against that frame.
+It returns before and after images and model states. `completed` describes the
+action batch. The independent simulator records task success.
 
 ## Acceptance commands
 
 ```bash
-# One model/device/action smoke
+# Native OSC smoke with independent replay
+bash scripts/run_kinex_native_smoke.sh
+
+# Legacy model/device/action smoke
 node scripts/run_kinex_smoke.mjs WORKSPACE OUTPUT KINEX_CORE_DIST
 
-# Direct-VLA episode without an LLM provider
+# Legacy direct-VLA episode without an LLM provider
 node scripts/run_direct_episode.mjs WORKSPACE OUTPUT KINEX_CORE_DIST \
   "put both the alphabet soup and the tomato sauce in the basket" 20 10
 ```

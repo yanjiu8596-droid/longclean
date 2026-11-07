@@ -90,11 +90,26 @@ path before running the 135-episode matrix.
 
 ## Remaining
 
-- Expose the native OSC path to Kinex and verify action, time and observation
-  parity against the standalone reference under the same initialization.
+- Validate the native OSC backend in a complete closed-loop episode.
 - Configure the Kinex high-level model provider for visual inventory and
   closed-loop object-state updates.
 - Run and aggregate the 135-episode V1 matrix.
+
+## Kinex native OSC parity — 2026-11-07 (Asia/Shanghai)
+
+- `e0ae0e3e6611f634cfc790e263153f21432ff42d` executed a 10-frame action chunk
+  with the pinned CUDA SmolVLA model on `libero-10-01`. The Kinex tool sent the
+  7D actions to the native relative `OSC_POSE` controller at 20 Hz.
+- A separate simulator replayed the same actions at seed 0 and init-state
+  index 0. At initialization and after frame 10, the simulator state hashes
+  and both camera views matched exactly. The model state vector differed from
+  the pinned LeRobot processor by at most `2.384185791015625e-07`. Both paths
+  advanced `0.5000000000000003` seconds and reported `success=false` at frame 10.
+- This acceptance covers one action chunk. The tool's `completed` status
+  records successful execution while the simulator remained nonterminal.
+- Results are in `tableclear-workspace/results/kinex-native-20261107T015621Z`.
+  See `device-smoke.json`, `parity.json`, and `kinex-osc/actions.jsonl`.
+  The local test suite passed 19 tests.
 
 ## First GPU Acceptance Gate
 
