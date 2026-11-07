@@ -8,10 +8,10 @@ import json
 from pathlib import Path
 import subprocess
 
+from validate_native_vision import PROJECT, VisualPlanner, model_pin, panel, qualified, summarize
 from native_temporal_vision import TEMPORAL_STRATEGIES, TemporalVision
 from native_visual_references import create_references, load_references
 from replay_native_frames import DEVELOPMENT, HOLDOUT, replay_panel, scene_labels
-from validate_native_vision import PROJECT, VisualPlanner, model_pin, panel, qualified, summarize
 
 
 MODEL = "qwen3_vl_4b_instruct"
