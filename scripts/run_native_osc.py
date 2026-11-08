@@ -443,11 +443,19 @@ def episode(args: argparse.Namespace) -> dict:
                                 observe_history(obs, initial, [])
                             record_visual(planner.inventory(obs, inspect=inspect_target), initial, "inventory")
                             state = planner.controller.state
-                        schedule = MethodSchedule(args.method, state, args.steps, args.chunk_steps)
+                        schedule = MethodSchedule(
+                            args.method, state, args.steps, args.chunk_steps,
+                            compact_prompt=args.diagnostic_compact_prompt, attempt_chunks=args.diagnostic_attempt_chunks,
+                        )
                         record["chunk_horizon"] = args.chunk_steps
                         record["method_protocol"] = (
                             "vision-runtime-probe-v1" if args.vision_runtime_probe else "shared-action-budget-v1"
                         )
+                        if args.diagnostic_compact_prompt or args.diagnostic_attempt_chunks != 13:
+                            record["method_protocol"] = "diagnostic-schedule-ablation-v1"
+                            record["schedule_ablation"] = {
+                                "compact_prompt": args.diagnostic_compact_prompt, "attempt_chunks": args.diagnostic_attempt_chunks,
+                            }
                     else:
                         base = next(a for a in record["model_artifacts"] if a["name"] == "smolvlm2_500m_video_instruct")
                         planner = VisualPlanner(
@@ -576,6 +584,8 @@ def main() -> None:
     parser.add_argument("--release-tail", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--dense-release", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--sampled-reset", action="store_true", help="use LIBERO's seeded reset for visual validation collection")
+    parser.add_argument("--diagnostic-compact-prompt", action="store_true")
+    parser.add_argument("--diagnostic-attempt-chunks", type=int, choices=(13, 26), default=13)
     args = parser.parse_args()
     if not 1 <= args.steps <= 520:
         parser.error("--steps must be between 1 and 520")
@@ -599,6 +609,10 @@ def main() -> None:
         parser.error("--workspace and --sim-python are required for a direct episode")
     if args.fair_methods and (args.chunk_steps != 10 or args.steps != 520):
         parser.error("the paired method protocol uses 10-step chunks and 520 available actions")
+    if args.diagnostic_compact_prompt or args.diagnostic_attempt_chunks != 13:
+        if (not args.fair_methods or args.init_index < 15 or args.method == "direct_vla"
+                or (args.diagnostic_attempt_chunks != 13 and args.method != "closed_loop_vla")):
+            parser.error("schedule ablations require a diagnostic index and a matching checklist method")
     if args.fair_methods and args.method == "closed_loop_vla" and args.visual_validation is None:
         parser.error("--visual-validation is required for the paired closed-loop method")
     if args.vision_runtime_probe and (

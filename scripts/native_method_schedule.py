@@ -12,11 +12,13 @@ from tableclear.state import TaskState
 
 
 class MethodSchedule:
-    def __init__(self, method: str, state: TaskState, budget: int, chunk: int) -> None:
+    def __init__(self, method: str, state: TaskState, budget: int, chunk: int, *, compact_prompt=False, attempt_chunks=13) -> None:
         self.method = method
         self.state = state
         self.budget = budget
         self.chunk = chunk
+        self.compact_prompt = compact_prompt
+        self.attempt_chunks = attempt_chunks
         self.targets = deque(obj.id for obj in state.objects)
         self.target = None
         self.slot_end = 0
@@ -41,13 +43,17 @@ class MethodSchedule:
                     self.target = target
                     self.state.record_attempt(target)
                     # A retry changes focus without resetting the simulation.
-                    self.slot_end = min(steps + 13 * self.chunk, self.budget)
+                    self.slot_end = min(steps + self.attempt_chunks * self.chunk, self.budget)
                     self.check_at = steps + 5 * self.chunk
                     break
             if self.target is None:
                 return None
         subtask = self.state.instruction_for(self.target)
-        return self.target, subtask.instruction, min(self.chunk, self.slot_end - steps)
+        instruction = subtask.instruction
+        if self.compact_prompt:
+            label = self.state.get(self.target).label.removesuffix(" can")
+            instruction = f"put the {label} in the basket"
+        return self.target, instruction, min(self.chunk, self.slot_end - steps)
 
     def needs_visual_update(self, steps: int, terminal: bool) -> bool:
         return self.method == "closed_loop_vla" and (terminal or steps >= min(self.slot_end, self.check_at))
