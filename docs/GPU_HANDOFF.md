@@ -82,6 +82,43 @@ For detached RoboEnv plumbing checks launched with a custom `--run-dir`,
 pass the resulting run directory's `run.json` to `roboenv stop` to use the
 owner socket and retain the terminal evidence.
 
+## Paired backbone pilot
+
+This is a separate inference experiment with the original two-object instruction.
+The nine conditions use official initial indices 0, 5 and 10, paired with seeds
+0, 1 and 2 respectively, across 01, 02 and 08. Both policies use native OSC, a
+10-action execution chunk and a 520-action budget. Keep the old three-method
+results separate. The pilot produces 18 episodes and compares two checkpoints.
+
+Use the Pi0.5 repository, revision and SHA-256 in `versions.lock`. Stage its
+checkpoint, config, and both saved processors with their stats files under
+`$workspace/models/pi05_libero_finetuned_v044`. Save the pinned public OpenPI
+SentencePiece source there as `paligemma_tokenizer.model`. The CPU preflight
+uses the existing model Python with `sentencepiece==0.2.1` and checks the
+converted tokenizer against OpenPI-style token IDs on the three task prompts.
+
+```bash
+model_python="$workspace/.kinex/model-python/bin/python"
+"$model_python" scripts/native_pi05.py --workspace "$workspace" --prepare-tokenizer --verify-weights
+"$model_python" scripts/compare_native_backbones.py
+```
+
+After CUDA and EGL are available, use the offline environment above and first
+execute one action in task 01. Check `episode.json` and `actions.jsonl` for the
+checkpoint, controller, finite 7D action and one executed step. A one-step run
+validates the pipeline. LIBERO still determines its episode outcome.
+
+```bash
+sim_python=/root/venvs/libero-cpu2/bin/python
+roboenv=/root/autodl-tmp/roboenv
+"$model_python" -u scripts/run_native_osc.py --policy pi05 --steps 1 --chunk-steps 10 \
+  --workspace "$workspace" --roboenv "$roboenv" --sim-python "$sim_python" \
+  --output "$workspace/results/pi05-action-$(date -u +%Y%m%dT%H%M%SZ)"
+"$model_python" -u scripts/compare_native_backbones.py --run \
+  --workspace "$workspace" --roboenv "$roboenv" --sim-python "$sim_python" \
+  --output "$workspace/results/pi05-backbone-pilot"
+```
+
 ## Kinex native OSC smoke and replay
 
 ```bash

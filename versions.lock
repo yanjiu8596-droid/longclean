@@ -22,6 +22,14 @@ status = "provisioned on GPU host"
 repository = "lerobot/smolvla_libero"
 revision = "a24f1f380461b665158d52acd140152c79e8b36d"
 
+[models.pi05_libero]
+repository = "lerobot/pi05_libero_finetuned_v044"
+revision = "7152f13e34c6c115d808aea0e5d08aca74eac14b"
+weights_bytes = 7473096344
+weights_sha256 = "877b3ec1130548b69af7f8aeef3ec9d3fc7738040f0b9beb490857ec970997ae"
+tokenizer_url = "https://storage.googleapis.com/big_vision/paligemma_tokenizer.model"
+tokenizer_sha256 = "8986bb4f423f07f8c7f70d0dbe3526fb2316056c17bae71b1ea975e77a168fc6"
+
 [models.smolvlm2_500m_video_instruct]
 status = "provisioned on GPU host"
 repository = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"

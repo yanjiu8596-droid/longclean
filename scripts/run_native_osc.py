@@ -1,4 +1,4 @@
-"""Run one direct SmolVLA episode on official LIBERO OSC in split Python environments."""
+"""Run a VLA episode on official LIBERO OSC in split Python environments."""
 
 from __future__ import annotations
 
@@ -404,9 +404,16 @@ def episode(args: argparse.Namespace) -> dict:
                 obs = read_observation(instruction, "initial")
                 record["initial_observation_state"] = obs["observation.state"][0].tolist()
                 artifact_root = args.workspace / ".kinex" / "devices" / "smolvla"
-                config = yaml.safe_load((artifact_root / "profile.yaml").read_text(encoding="utf-8"))
-                record["model_artifacts"] = config["intrinsics"]["artifacts"]
-                record["model"] = config["intrinsics"]["variant"]
+                if args.policy == "pi05":
+                    import native_pi05
+
+                    model = native_pi05.model_directory(args.workspace)
+                    record["model"] = native_pi05.PIN["repository"]
+                    record["model_artifacts"] = [native_pi05.PIN]
+                else:
+                    config = yaml.safe_load((artifact_root / "profile.yaml").read_text(encoding="utf-8"))
+                    record["model_artifacts"] = config["intrinsics"]["artifacts"]
+                    record["model"] = config["intrinsics"]["variant"]
                 planner = None
                 schedule = None
                 if scheduled_methods or args.method != "direct_vla":
@@ -485,7 +492,10 @@ def episode(args: argparse.Namespace) -> dict:
                         target = subtask.target_id
                         instruction = subtask.instruction
                     if service is None:
-                        service = open_service(config, artifact_root=artifact_root)
+                        if args.policy == "pi05":
+                            service = native_pi05.open_service(model)
+                        else:
+                            service = open_service(config, artifact_root=artifact_root)
                         horizon = horizon or service["policy"].config.n_action_steps
                         record["chunk_horizon"] = horizon
                     if schedule is None:
@@ -570,6 +580,7 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=520)
     parser.add_argument("--scene", type=int, choices=(1, 2, 8), default=1)
     parser.add_argument("--chunk-steps", type=int, choices=range(1, 51), metavar="1..50")
+    parser.add_argument("--policy", choices=("smolvla", "pi05"), default="smolvla")
     parser.add_argument("--method", choices=("direct_vla", "fixed_checklist_vla", "closed_loop_vla"), default="direct_vla")
     protocol = parser.add_mutually_exclusive_group()
     protocol.add_argument("--fair-methods", action="store_true")
@@ -589,6 +600,9 @@ def main() -> None:
     args = parser.parse_args()
     if not 1 <= args.steps <= 520:
         parser.error("--steps must be between 1 and 520")
+    if args.policy == "pi05" and (args.method != "direct_vla" or args.fair_methods or args.vision_runtime_probe
+                                or args.sim_worker or args.sampled_reset or args.chunk_steps != 10):
+        parser.error("Pi0.5 uses standalone direct_vla with --chunk-steps 10")
     if args.sampled_reset and (args.fair_methods or args.vision_runtime_probe or args.socket is not None
                                or args.method != "direct_vla" or args.init_index != 0):
         parser.error("sampled resets are only for separate visual validation collection")
