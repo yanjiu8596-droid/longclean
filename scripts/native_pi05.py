@@ -42,7 +42,7 @@ def prepare_tokenizer(model: Path) -> None:
     import sentencepiece
     from tokenizers.processors import TemplateProcessing
     from transformers import PreTrainedTokenizerFast
-    from transformers.convert_slow_tokenizer import GemmaConverter
+    from transformers.convert_slow_tokenizer import GemmaConverter, GemmaSentencePieceExtractor
 
     source = model / "paligemma_tokenizer.model"
     if sha256(source) != PIN["tokenizer_sha256"]:
@@ -50,7 +50,16 @@ def prepare_tokenizer(model: Path) -> None:
     original = sentencepiece.SentencePieceProcessor(model_file=str(source))
     special = {f"{name}_token": original.id_to_piece(getattr(original, f"{name}_id")())
                for name in ("pad", "bos", "eos", "unk")}
-    backend = GemmaConverter(SimpleNamespace(vocab_file=str(source), **special)).converted()
+
+    class Extractor(GemmaSentencePieceExtractor):
+        def __init__(self, path):
+            super().__init__(path)
+            # The pinned Transformers extractor reads an unset SentencePiece processor.
+            self.sp = original
+
+    converter = GemmaConverter(SimpleNamespace(vocab_file=str(source), **special))
+    converter.SpmExtractor = Extractor
+    backend = converter.converted()
     backend.post_processor = TemplateProcessing(
         single=f"{special['bos_token']} $A", special_tokens=[(special["bos_token"], original.bos_id())],
     )
