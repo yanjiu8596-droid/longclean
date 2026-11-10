@@ -38,16 +38,18 @@ def make_plan() -> dict:
 
 def read_episode(output, plan, case, policy):
     path = output / "episode.json"
-    if not path.is_file():
+    try:
+        row = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
         return None
-    row = json.loads(path.read_text(encoding="utf-8"))
-    if (row["project_commit"] != plan["project_commit"] or row["step_budget"] != BUDGET
-            or row.get("chunk_horizon") != CHUNK or row["method"] != "direct_vla"
-            or row["task_id"] != f"libero/libero-10-{case['scene']:02d}"
-            or row["seed"] != case["seed"] or row["init_state_index"] != case["init"]
+    if (not isinstance(row, dict) or row.get("project_commit") != plan["project_commit"]
+            or row.get("step_budget") != BUDGET or row.get("chunk_horizon") != CHUNK
+            or row.get("method") != "direct_vla" or row.get("task_id") != f"libero/libero-10-{case['scene']:02d}"
+            or row.get("seed") != case["seed"] or row.get("init_state_index") != case["init"]
             or row.get("controller") != "OSC_POSE" or row.get("visual_calls") != 0
             or row.get("terminal_reason") not in ("simulator_success", "simulator_done", "step_budget")
-            or not isinstance(row.get("success"), bool)):
+            or not isinstance(row.get("success"), bool) or type(row.get("steps")) is not int
+            or not 1 <= row["steps"] <= BUDGET):
         return None
     if policy == "pi05" and (row["model"] != PIN["repository"] or row["model_artifacts"] != [PIN]):
         raise ValueError(f"Unexpected Pi0.5 model provenance in {path}")
