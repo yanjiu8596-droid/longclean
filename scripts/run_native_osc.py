@@ -11,11 +11,15 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
+from xml.etree import ElementTree
 
 
 PROJECT = Path(__file__).resolve().parents[1]
 CAMERAS = {"camera1": "agentview_image", "camera2": "robot0_eye_in_hand_image"}
 EXTRA_VIEWS = ("birdview", "frontview", "sideview", "galleryview", "paperview", "robot0_robotview")
+BACKBONE_PROTOCOL = "tableclear/backbone-study/1"
+BACKBONE_CHUNKS = (5, 10, 25)
 
 
 class ReleaseSampling:
@@ -60,6 +64,24 @@ def validate_actions(actions: object) -> None:
         for action in actions
     ):
         raise ValueError("expected 1 to 50 finite 7D actions")
+
+
+def verify_gpu_placement(expected_uuid: str, simulator_pid: int) -> dict:
+    report = ElementTree.fromstring(subprocess.check_output(["nvidia-smi", "-q", "-x"], timeout=15))
+    processes = {"policy": (str(os.getpid()), "C"), "simulator": (str(simulator_pid), "G")}
+    devices = {
+        name: sorted({
+            gpu.findtext("uuid") for gpu in report.findall("gpu")
+            for process in gpu.findall("processes/process_info")
+            if process.findtext("pid", "").strip() == pid and kind in process.findtext("type", "")
+        })
+        for name, (pid, kind) in processes.items()
+    }
+    if any(uuids != [expected_uuid] for uuids in devices.values()):
+        raise RuntimeError(f"Expected CUDA and EGL on {expected_uuid}; nvidia-smi reported {devices}")
+    return {"uuid": expected_uuid, "egl_device_id": os.environ["MUJOCO_EGL_DEVICE_ID"],
+            "driver_version": report.findtext("driver_version"),
+            "policy_pid": os.getpid(), "simulator_pid": simulator_pid}
 
 
 def simulate(
@@ -252,6 +274,7 @@ def episode(args: argparse.Namespace) -> dict:
     sys.path.insert(0, str(PROJECT / "kinex_devices" / "smolvla"))
     from driver import open_service, predict_chunk
 
+    started = perf_counter()
     output = args.output
     output.mkdir(parents=True, exist_ok=False)
     record = {
@@ -267,10 +290,13 @@ def episode(args: argparse.Namespace) -> dict:
         "step_budget": args.steps,
         "steps": 0,
         "vla_calls": 0,
+        "policy_inference_s": 0.0,
         "visual_calls": 0,
         "success": None,
         "terminal_reason": "runtime_error",
     }
+    if args.backbone_study:
+        record["method_protocol"] = BACKBONE_PROTOCOL
     torch.manual_seed(args.seed)
     processor = LiberoProcessorStep()
     worker_command = [
@@ -501,7 +527,11 @@ def episode(args: argparse.Namespace) -> dict:
                     if schedule is None:
                         count = min(horizon, args.steps - record["steps"])
                     policy_obs = {key: value for key, value in obs.items() if key not in ("visual_rgb", "visual_geometry")}
+                    inference_started = perf_counter()
                     actions = predict_chunk(service, {**policy_obs, "task": instruction})[:count]
+                    record["policy_inference_s"] += perf_counter() - inference_started
+                    if args.verify_gpu and "gpu_placement" not in record:
+                        record["gpu_placement"] = verify_gpu_placement(args.verify_gpu, worker.pid)
                     worker.stdin.write(json.dumps(actions, allow_nan=False) + "\n")
                     worker.stdin.flush()
                     result = receive(worker)
@@ -564,6 +594,8 @@ def episode(args: argparse.Namespace) -> dict:
     finally:
         if torch.cuda.is_initialized():
             record["cuda_peak_reserved_mib"] = math.ceil(torch.cuda.max_memory_reserved() / (1024 * 1024))
+        record["policy_inference_s"] = round(record["policy_inference_s"], 6)
+        record["episode_elapsed_s"] = round(perf_counter() - started, 6)
         record["finished_at"] = datetime.now(timezone.utc).isoformat()
         (output / "episode.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     return record
@@ -581,6 +613,8 @@ def main() -> None:
     parser.add_argument("--scene", type=int, choices=(1, 2, 8), default=1)
     parser.add_argument("--chunk-steps", type=int, choices=range(1, 51), metavar="1..50")
     parser.add_argument("--policy", choices=("smolvla", "pi05"), default="smolvla")
+    parser.add_argument("--backbone-study", action="store_true", help="run a fixed-state backbone study episode")
+    parser.add_argument("--verify-gpu", metavar="UUID", help="verify the live CUDA and EGL processes on this GPU")
     parser.add_argument("--method", choices=("direct_vla", "fixed_checklist_vla", "closed_loop_vla"), default="direct_vla")
     protocol = parser.add_mutually_exclusive_group()
     protocol.add_argument("--fair-methods", action="store_true")
@@ -600,8 +634,16 @@ def main() -> None:
     args = parser.parse_args()
     if not 1 <= args.steps <= 520:
         parser.error("--steps must be between 1 and 520")
-    if args.policy == "pi05" and (args.method != "direct_vla" or args.fair_methods or args.vision_runtime_probe
-                                or args.sim_worker or args.sampled_reset or args.chunk_steps != 10):
+    standalone_direct = (args.method == "direct_vla" and not any((
+        args.fair_methods, args.vision_runtime_probe, args.sim_worker, args.sampled_reset,
+    )))
+    if args.backbone_study and (not standalone_direct or args.steps not in (1, 520)
+                                or args.chunk_steps not in BACKBONE_CHUNKS
+                                or (args.policy == "smolvla" and args.chunk_steps != 10)):
+        parser.error("the backbone study uses fixed-state direct_vla, 1 or 520 steps, and Pi0.5 chunks 5, 10 or 25")
+    if args.verify_gpu and (not args.backbone_study or "MUJOCO_EGL_DEVICE_ID" not in os.environ):
+        parser.error("--verify-gpu requires --backbone-study and MUJOCO_EGL_DEVICE_ID")
+    if args.policy == "pi05" and (not standalone_direct or (not args.backbone_study and args.chunk_steps != 10)):
         parser.error("Pi0.5 uses standalone direct_vla with --chunk-steps 10")
     if args.sampled_reset and (args.fair_methods or args.vision_runtime_probe or args.socket is not None
                                or args.method != "direct_vla" or args.init_index != 0):

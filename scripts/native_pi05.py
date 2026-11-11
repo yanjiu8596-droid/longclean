@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 import tomllib
 from types import SimpleNamespace
+from shutil import copyfileobj
+from urllib.request import urlopen
 
 
 PROJECT = Path(__file__).resolve().parent.parent
@@ -36,6 +38,24 @@ def weights_path(model: Path, *, verify: bool = False) -> Path:
     if verify and sha256(path) != PIN["weights_sha256"]:
         raise ValueError(f"Pi0.5 checkpoint SHA-256 mismatch: {path}")
     return path
+
+
+def download_assets(model: Path) -> None:
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(
+        repo_id=PIN["repository"], revision=PIN["revision"], local_dir=model, max_workers=1,
+        allow_patterns=("config.json", "model.safetensors", "policy_preprocessor*.json",
+                        "policy_preprocessor*.safetensors", "policy_postprocessor*.json", "policy_postprocessor*.safetensors"),
+    )
+    source = model / "paligemma_tokenizer.model"
+    if not source.exists() or sha256(source) != PIN["tokenizer_sha256"]:
+        temporary = source.with_suffix(".download")
+        with urlopen(PIN["tokenizer_url"], timeout=60) as response, temporary.open("wb") as stream:
+            copyfileobj(response, stream)
+        if sha256(temporary) != PIN["tokenizer_sha256"]:
+            raise ValueError("Downloaded PaliGemma tokenizer failed SHA-256 verification")
+        temporary.replace(source)
 
 
 def prepare_tokenizer(model: Path) -> None:
@@ -150,14 +170,17 @@ def cpu_preflight(model: Path) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", required=True, type=Path)
+    parser.add_argument("--download", action="store_true", help="fetch the pinned public checkpoint and tokenizer")
     parser.add_argument("--prepare-tokenizer", action="store_true")
     parser.add_argument("--verify-weights", action="store_true")
     args = parser.parse_args()
     model = model_directory(args.workspace)
-    if args.prepare_tokenizer:
+    if args.download:
+        download_assets(model)
+    if args.prepare_tokenizer or args.download:
         prepare_tokenizer(model)
     report = cpu_preflight(model)
-    if args.verify_weights:
+    if args.verify_weights or args.download:
         weights_path(model, verify=True)
         report["weights_sha256"] = PIN["weights_sha256"]
     print(json.dumps(report, indent=2))

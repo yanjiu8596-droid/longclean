@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from itertools import count
 import json
 from pathlib import Path
 from statistics import median
@@ -13,6 +14,7 @@ import time
 import tomllib
 
 from native_pi05 import PIN, PROJECT, model_directory, weights_path
+from run_native_osc import BACKBONE_PROTOCOL
 
 
 POLICIES = ("smolvla", "pi05")
@@ -36,53 +38,69 @@ def make_plan() -> dict:
     }
 
 
-def read_episode(output, plan, case, policy):
+def read_episode(output, plan, case, policy, *, chunk=CHUNK, budget=BUDGET, gpu_uuid=None):
     path = output / "episode.json"
     try:
         row = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         return None
     if (not isinstance(row, dict) or row.get("project_commit") != plan["project_commit"]
-            or row.get("step_budget") != BUDGET or row.get("chunk_horizon") != CHUNK
+            or row.get("step_budget") != budget or row.get("chunk_horizon") != chunk
             or row.get("method") != "direct_vla" or row.get("task_id") != f"libero/libero-10-{case['scene']:02d}"
             or row.get("seed") != case["seed"] or row.get("init_state_index") != case["init"]
             or row.get("controller") != "OSC_POSE" or row.get("visual_calls") != 0
             or row.get("terminal_reason") not in ("simulator_success", "simulator_done", "step_budget")
             or not isinstance(row.get("success"), bool) or type(row.get("steps")) is not int
-            or not 1 <= row["steps"] <= BUDGET):
+            or not 1 <= row["steps"] <= budget):
         return None
-    if policy == "pi05" and (row["model"] != PIN["repository"] or row["model_artifacts"] != [PIN]):
+    if gpu_uuid and (row.get("method_protocol") != BACKBONE_PROTOCOL
+                     or row.get("gpu_placement", {}).get("uuid") != gpu_uuid):
+        raise ValueError(f"Missing study GPU verification in {path}")
+    if policy == "pi05" and (row.get("model") != PIN["repository"] or row.get("model_artifacts") != [PIN]):
         raise ValueError(f"Unexpected Pi0.5 model provenance in {path}")
-    if policy == "smolvla" and row["model"] != f"{plan[policy]['repository']}@{plan[policy]['revision']}":
+    if policy == "smolvla" and row.get("model") != f"{plan[policy]['repository']}@{plan[policy]['revision']}":
         raise ValueError(f"Unexpected SmolVLA model provenance in {path}")
     return {**row, "policy": policy, "artifact": output.name}
 
 
-def run_case(args, plan, case, policy):
+def run_case(args, plan, case, policy, *, chunk=CHUNK, budget=BUDGET, gpu_uuid=None, env=None, lock_fd=None):
     key = f"{case['scene']:02d}-seed{case['seed']}-init{case['init']:02d}-{policy}"
-    for suffix in ("", "-retry1"):
+    if gpu_uuid:
+        key += f"-{chunk}"
+    launched = 0
+    for attempt in count() if gpu_uuid else range(2):
+        suffix = f"-retry{attempt}" if attempt else ""
         output = args.output / f"{key}{suffix}"
         log_path = output.with_suffix(".log")
         if output.exists() or log_path.exists():
-            row = read_episode(output, plan, case, policy)
+            row = read_episode(output, plan, case, policy, chunk=chunk, budget=budget, gpu_uuid=gpu_uuid)
             if row is not None:
                 return row
             continue
+        if launched == 2:
+            break
+        launched += 1
         command = [
             sys.executable, "-u", str(PROJECT / "scripts" / "run_native_osc.py"),
             "--workspace", str(args.workspace), "--roboenv", str(args.roboenv), "--sim-python", str(args.sim_python),
-            "--output", str(output), "--policy", policy, "--steps", str(BUDGET), "--chunk-steps", str(CHUNK),
+            "--output", str(output), "--policy", policy, "--steps", str(budget), "--chunk-steps", str(chunk),
             "--scene", str(case["scene"]), "--seed", str(case["seed"]), "--init-index", str(case["init"]),
         ]
+        if gpu_uuid:
+            command.extend(("--backbone-study", "--verify-gpu", gpu_uuid))
+        options = {"env": env, "pass_fds": (lock_fd,)} if lock_fd is not None else {"env": env}
         with log_path.open("x", encoding="utf-8") as log:
-            process = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
+            process = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, **options)
         if process.returncode:
-            raise RuntimeError(f"Episode exited with status {process.returncode}: {log_path}")
-        row = read_episode(output, plan, case, policy)
+            if not gpu_uuid:
+                raise RuntimeError(f"Episode exited with status {process.returncode}: {log_path}")
+            write_json(output.with_suffix(".failure.json"), {"exit_code": process.returncode, "log": log_path.name})
+            continue
+        row = read_episode(output, plan, case, policy, chunk=chunk, budget=budget, gpu_uuid=gpu_uuid)
         if row is None:
             raise ValueError(f"Invalid episode evidence: {output}")
         return row
-    raise RuntimeError(f"Both attempts failed for {key}; see preserved episode logs")
+    raise RuntimeError(f"No valid episode for {key}; see preserved logs in {args.output}")
 
 
 def summarize(pairs):
