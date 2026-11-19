@@ -12,6 +12,7 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_LAB = Path(os.environ.get("TABLECLEAR_LAB", "."))
 PROJECT_REVISION = "42a8fa2d01a60e82d3da8707b421f6b6d722aad1"
 LEROBOT_REVISION = "772bc21ef1ab17b72e17ebb1593ff78725a21d55"
+STATE_ENCODING = "lerobot-libero-torch-float32"
 ARCHIVE_SHA256 = "26c7d50a7e87de2248a0882c9ac971d4c0fe17a7ec8797a48e422befff51577a"
 RULE_SHA256 = "18d5f85103681fd40c918d33ff6f7920d28ac80bf86e7b89b9a6911b02c5b911"
 SCENE = 8
@@ -94,17 +95,19 @@ def array_sha(array):
 
 
 def state_vector(eef_pos, eef_quat, fingers):
-    """Match V1's float32 LIBERO state encoding."""
-    import numpy as np
+    """Use the pinned LeRobot LiberoProcessorStep's Torch CPU arithmetic."""
+    import torch
 
-    quat = eef_quat.astype(np.float32)
-    one = np.float32(1)
-    w = np.clip(quat[3], -one, one)
-    denominator = np.sqrt(one - w * w)
-    axis_angle = np.zeros(3, dtype=np.float32)
-    if denominator > 1e-10:
-        axis_angle = (quat[:3] / denominator) * (np.float32(2) * np.arccos(w))
-    return np.concatenate([eef_pos, axis_angle, fingers]).astype(np.float32)
+    quat = torch.from_numpy(eef_quat).reshape(1, 4).float()
+    w = quat[:, 3].clamp(-1.0, 1.0)
+    denominator = torch.sqrt(torch.clamp(1.0 - w * w, min=0.0))
+    axis_angle = torch.zeros((1, 3), dtype=torch.float32)
+    valid = denominator > 1e-10
+    if valid.any():
+        angle = 2.0 * torch.acos(w[valid])
+        axis = quat[valid, :3] / denominator[valid].unsqueeze(1)
+        axis_angle[valid] = axis * angle.unsqueeze(1)
+    return torch.cat((torch.from_numpy(eef_pos), axis_angle[0], torch.from_numpy(fingers))).float().numpy()
 
 
 def read_physics(folder, steps, terminal):

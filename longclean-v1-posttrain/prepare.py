@@ -12,7 +12,7 @@ import numpy as np
 
 from common import (
     ARCHIVE_SHA256, BUDGET, DEFAULT_LAB, FPS, Lab, REPLAY_FIELDS, RULE_SHA256, TASK_ID,
-    VAL_LAYOUTS, file_sha, read_json, state_vector, write_json,
+    STATE_ENCODING, VAL_LAYOUTS, file_sha, read_json, state_vector, write_json,
 )
 from simulator import Simulator
 
@@ -64,6 +64,7 @@ def read_archive(path):
                 "episode_sha256": sha256(episode_bytes).hexdigest(),
                 "actions_sha256": sha256(action_bytes).hexdigest(),
                 "archive_path": prefix,
+                "state_encoding": STATE_ENCODING,
             }
             output.append((info, episode, trace, np.asarray(executed, dtype=np.float32)))
     if len({item[0]["id"] for item in output}) != 120:
@@ -88,7 +89,7 @@ def replay(lab, root, source):
         previous = read_json(final / "verified.json")
         hashes = {"dense.npz": "dense_sha256", "actions.npy": "native_actions_sha256",
                   "audit.jsonl": "audit_sha256", "boundaries.jsonl": "boundaries_sha256"}
-        if (all(previous[key] == value for key, value in info.items())
+        if (all(previous.get(key) == value for key, value in info.items())
                 and all(file_sha(final / name) == previous[key] for name, key in hashes.items())):
             return previous
         raise ValueError(f"Existing replay no longer matches its manifest: {final}")
@@ -156,15 +157,20 @@ def main():
     records, rejected = [], []
     with ThreadPoolExecutor(max_workers=args.workers) as workers:
         futures = [(source[0], workers.submit(replay, lab, root, source)) for source in selected]
-        for info, result in futures:
-            try:
-                record = result.result()
-            except (ValueError, RuntimeError, OSError) as error:
-                rejected.append({"id": info["id"], "reason": str(error)})
-                print("REPLAY_REJECT", info["id"], str(error), flush=True)
-            else:
-                records.append(record)
-                print("REPLAY_OK", info["id"], record["steps"], record["boundaries_verified"], flush=True)
+        try:
+            for info, result in futures:
+                try:
+                    record = result.result()
+                except (ValueError, RuntimeError, OSError) as error:
+                    rejected.append({"id": info["id"], "reason": str(error)})
+                    print("REPLAY_REJECT", info["id"], str(error), flush=True)
+                else:
+                    records.append(record)
+                    print("REPLAY_OK", info["id"], record["steps"], record["boundaries_verified"], flush=True)
+        except KeyboardInterrupt:
+            for _, future in futures:
+                future.cancel()
+            raise
     name = f"prepare-{args.case}.json" if args.case else "replay-manifest.json"
     write_json(args.run / name, {"archive_sha256": ARCHIVE_SHA256, "episodes": records, "rejected": rejected})
     if rejected:

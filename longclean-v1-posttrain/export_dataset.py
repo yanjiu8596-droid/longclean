@@ -6,7 +6,7 @@ import tempfile
 
 import numpy as np
 
-from common import CAMERA_KEYS, FPS, array_sha, file_sha, read_json, write_json
+from common import CAMERA_KEYS, FPS, STATE_ENCODING, array_sha, file_sha, read_json, write_json
 
 
 FEATURES = {
@@ -101,7 +101,8 @@ def main():
     args = parser.parse_args()
     source = args.run / "replay-manifest.json"
     expected = read_json(source)
-    if len(expected["episodes"]) != 120 or expected["rejected"]:
+    if (len(expected["episodes"]) != 120 or expected["rejected"]
+            or any(case.get("state_encoding") != STATE_ENCODING for case in expected["episodes"])):
         raise ValueError("Complete audited historical replay is required")
     final = args.run / "dataset"
     if final.is_dir():

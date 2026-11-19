@@ -13,7 +13,7 @@ from common import BUDGET, DEFAULT_LAB, Lab, SCENE, SOUP, state_vector
 
 
 def verify_egl():
-    uuid = os.environ.get("CUDA_VISIBLE_DEVICES")
+    uuid = os.environ.get("TABLECLEAR_EGL_GPU_UUID", os.environ.get("CUDA_VISIBLE_DEVICES"))
     if not uuid or not uuid.startswith("GPU-"):
         raise RuntimeError("Select an authorized GPU UUID before launching LIBERO")
     xml = ElementTree.fromstring(check_output(["nvidia-smi", "-i", uuid, "-q", "-x"], timeout=15))

@@ -1,6 +1,7 @@
 """The V1 simulator's JSON response pipe, with per-action sidecar capture."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 
@@ -22,9 +23,15 @@ class Simulator:
 
     def __enter__(self):
         self.log = (self.output / "simulator.log").open("w", encoding="utf-8")
+        environment = os.environ.copy()
+        uuid = environment.get("CUDA_VISIBLE_DEVICES", "")
+        index = environment.get("MUJOCO_EGL_DEVICE_ID")
+        if uuid.startswith("GPU-") and index is not None:
+            # The pinned robosuite binding expects an ordinal for its EGL probe.
+            environment.update(CUDA_VISIBLE_DEVICES=index, TABLECLEAR_EGL_GPU_UUID=uuid)
         self.process = subprocess.Popen(
             self.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=self.log, text=True, encoding="utf-8",
+            stderr=self.log, text=True, encoding="utf-8", env=environment,
         )
         try:
             self.initial = self._receive()

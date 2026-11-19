@@ -18,6 +18,7 @@ esac
 
 wait_seconds=${TABLECLEAR_GPU_WAIT_SECONDS:-28800}
 replay_workers=${TABLECLEAR_REPLAY_WORKERS:-2}
+replay_smoke_case=${TABLECLEAR_REPLAY_SMOKE_CASE:-init44-seed08}
 sim_python="${TABLECLEAR_SIM_PYTHON:-$lab/roboenv/.venv-sim/libero/bin/python}"
 model_python="${TABLECLEAR_MODEL_PYTHON:-$lab/workspace/.kinex/model-python/bin/python}"
 archive="${TABLECLEAR_V1_ARCHIVE:-$lab/workspace/results/lab-backbone-v1/review/scene08-night-release-120/night-evidence.zip}"
@@ -126,7 +127,7 @@ if [[ "$through" != replay-smoke && "$through" != replay ]]; then
     test -x "$model_python"
     stage training-runtime cpu "$model_python" -B "$src/check_runtime.py"
 fi
-stage replay-smoke gpu "$sim_python" -B "$src/prepare.py" --run "$run" --archive "$archive" --case init44-seed08 --workers 1
+stage replay-smoke gpu "$sim_python" -B "$src/prepare.py" --run "$run" --archive "$archive" --case "$replay_smoke_case" --workers 1
 if [[ "$through" == replay-smoke ]]; then exit 0; fi
 stage replay gpu "$sim_python" -B "$src/prepare.py" --run "$run" --archive "$archive" --workers "$replay_workers"
 if [[ "$through" == replay ]]; then exit 0; fi
