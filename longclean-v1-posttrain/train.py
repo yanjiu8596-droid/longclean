@@ -308,6 +308,7 @@ def main():
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--arm", choices=(*METHODS, "smoke"), required=True)
     args = parser.parse_args()
+    torch.cuda.init()
     torch.manual_seed(TRAIN_SEED)
     torch.cuda.reset_peak_memory_stats(0)
     lab = Lab(args.lab)
