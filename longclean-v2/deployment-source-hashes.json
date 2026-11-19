@@ -1,0 +1,162 @@
+[
+  {
+    "path": "common.py",
+    "lab_sha256": "bff5f752d8d4d45fdd0f8e5c7d1f1fbf9136cfda87a60609cb7b8b4917fdd922",
+    "git_sha256": "e14aa2e49f6cda82f1da16a28bfd76596fe1ab6c68ec0e4990fa2573c699aab8"
+  },
+  {
+    "path": "overnight.sh",
+    "lab_sha256": "d00c408f3d2e357e0e7ff3fa28c8a488b5b56c9ba4f2084331dc90853ea59e72",
+    "git_sha256": "c510bb005f3713be2cdaf6f1817d3034787ffc78f2b8064bcb3be31cd76d4056"
+  },
+  {
+    "path": "start.sh",
+    "lab_sha256": "8533cc08ac9776c0e72a358748ea1818b17f0e518e936ea89caeee32da5e875c",
+    "git_sha256": "1f85e20f525d2d7f9d1aeb6e27c86951098ba63d26b88a8bba7747efae22eedb"
+  },
+  {
+    "path": "active-look/launch.sh",
+    "lab_sha256": "9d2bb100cb257f68f7989ee247f66e44bd21f32fb2c89acc4c9a3cced8853823",
+    "git_sha256": "0f42e82f1e6929519e2fca22c758c1b5d8741e0f0f1e2e165ecb1fbf8800b367"
+  },
+  {
+    "path": "identity-link/launch.sh",
+    "lab_sha256": "79575757f09ccaea1ff274c20a8f08ddb7a414d86147984d5aafd8e517bb5001",
+    "git_sha256": "ad8a0ac1d8c01021470d24f15518c36505d469979654be1d1df964ed52c7d28f"
+  },
+  {
+    "path": "identity-link/stage3c-run.sh",
+    "lab_sha256": "7d81e710295fbc108d32c75ade06312d294690911e0b3559356512a8ea77147b",
+    "git_sha256": "8a684c3d3980029517e78f1dd38d94006ea205fd5dbaf32f10de5255f8a0e6d3"
+  },
+  {
+    "path": "identity-link/stage3d-pi.sh",
+    "lab_sha256": "74af59633cd3e2419fab0f6c4aee0fc5ede61d219d909234b7e206173c1fc1a2",
+    "git_sha256": "bd43904a0bc40d77a2240cb3954c9b2331ee6b5327402494d9a2053c86983e97"
+  },
+  {
+    "path": "identity-link/stage3d-run.sh",
+    "lab_sha256": "07e90137320886057f2d2f11d36735e0b70284d5ae2c79d4dea221a1f8fd1f8e",
+    "git_sha256": "94f34b51c294644ef74b12385927687d1753d97ad3829cfe5e9a16d9b4b06ae0"
+  },
+  {
+    "path": "identity-link/stage3d-score.sh",
+    "lab_sha256": "4040ca827da71c706559ee7dc8d28fffee293aa5c148e1c7ba7c429e40d878cd",
+    "git_sha256": "d3d59370834e7790a106321a863e78582ff4836d61d84957ef8997d3227e25fc"
+  },
+  {
+    "path": "identity-link/closed-loop/actual_progress_gpu.sh",
+    "lab_sha256": "90b03dc0fd48503d88d8af24e22b04eda44c884a09de4033da7268cf7be25c0f",
+    "git_sha256": "d0c11ac59ec849011c4c7badc89fcb0b192b6b7eef139bb5f83aac61bb1c9672"
+  },
+  {
+    "path": "identity-link/closed-loop/basket_retreat_fresh_gpu.sh",
+    "lab_sha256": "76e7471bd73de1da580993698ba4abd5ae9d8ecabe0549bf99e9adc91f0c33ab",
+    "git_sha256": "a453dbfb2273eed4c70dc4dbca20439caa2131f126204aa432aa9776e54f6375"
+  },
+  {
+    "path": "identity-link/closed-loop/basket_retreat_gpu.sh",
+    "lab_sha256": "c3226eea8d4275820c3db44509f4edbdb7b0e063fc949685ad138191a3c1649c",
+    "git_sha256": "3e51eed563c7a513d2aaad980c2daed1c1755d62d386777295cf50b04e19dfe1"
+  },
+  {
+    "path": "identity-link/closed-loop/basket_stall_gpu.sh",
+    "lab_sha256": "1260d510ffaee9964197ef06900c6ca3d3b365cac0eb00be91940e2a51fdbbc4",
+    "git_sha256": "7138b6b6a2bc384357b34c9a737c9d3143c6ca9463a168ce2903b9885b9e2f78"
+  },
+  {
+    "path": "identity-link/closed-loop/dense_online_extra_gpu.sh",
+    "lab_sha256": "3f22471ae0d6235ec40b736228976eb9944b750210fd72b68de26564190ef99a",
+    "git_sha256": "cff38946610fbec58bf021f5171433db826b8102f3caa4e29d1e8c4df0938549"
+  },
+  {
+    "path": "identity-link/closed-loop/dense_online_gpu.sh",
+    "lab_sha256": "f8fc6138f27059f2fd020a0b9e05342b7b1fdb2430f9e3af47da36d663088166",
+    "git_sha256": "35cb5a384b181dfce6e8483ba6acc3021b77547e331f5c60a89dbc15a6c35f7f"
+  },
+  {
+    "path": "identity-link/closed-loop/near_table_grasp_gpu.sh",
+    "lab_sha256": "7acf73f8d0eaf9f935813105f543e758625126d7377d32231dd54001d408680e",
+    "git_sha256": "1623279e3266fba78324acba18249cc530aed3eaa2ae14f94768bd71a24b3d32"
+  },
+  {
+    "path": "identity-link/closed-loop/release_dense_gpu.sh",
+    "lab_sha256": "6cac7871500a985c1bea1f641ce60739c4d08197dc2eb21656ab8ef6ef4dc2ef",
+    "git_sha256": "3010d8f4c6d6f0b0963d7f8aca0729cf56c2467a4e66b48be842d0679064ecc2"
+  },
+  {
+    "path": "identity-link/closed-loop/release_window_gpu.sh",
+    "lab_sha256": "b058fea37d3e31967dd3068d0128340dca18a1d1d9a0eef926c6e7d0b2869c03",
+    "git_sha256": "872afed7b0e4887e9748fe5b9b18f2b5b5adc0177fffedd64ea8810786a62e58"
+  },
+  {
+    "path": "identity-link/closed-loop/sauce_controls_gpu.sh",
+    "lab_sha256": "d326775bef2d89bb29b6a6e7549c7c1e9bcb90861670e2af116fe00656576e6e",
+    "git_sha256": "3815a2afb300da39df12592926f225355b35437f66e8bbf7a8b04a3104134e8b"
+  },
+  {
+    "path": "identity-link/closed-loop/sauce_holdout_gpu.sh",
+    "lab_sha256": "6064847613a314ee1451febbaf56f21113c454dac1d791a72108987cbeb31d44",
+    "git_sha256": "ba6b5673a3b0451febe5c3b15252f05c1283a8617b013cc0ab7782b13d7926d6"
+  },
+  {
+    "path": "identity-link/closed-loop/soup_execution_gpu.sh",
+    "lab_sha256": "543385cb7a2e4d41db78676d28d13ba86b2bd1fdf8491d87b9ae10c894e72154",
+    "git_sha256": "ed4acca8fd211c87f331249dca80ca273d66964555a4321afa5f01919accbc78"
+  },
+  {
+    "path": "identity-link/closed-loop/soup_placement_gpu.sh",
+    "lab_sha256": "89fcd0d6d1fd424f25847a073a64e7d3b2b652f1489ed62871aaad1e25dcc7a9",
+    "git_sha256": "db911c91211a69a2d476d439fa54af639c0fcb23dbefb44df9c956c6ab9cb6ca"
+  },
+  {
+    "path": "identity-link/closed-loop/soup_placement_v2_gpu.sh",
+    "lab_sha256": "5d43412d49c544c3bfae96bbbc54d734c6c96bb1f339d3158c180292359321d5",
+    "git_sha256": "4e5a6e4690e7774bb2e4fc07065dcaaa5b37331e92f427b4475d454c2dac7c8d"
+  },
+  {
+    "path": "identity-link/closed-loop/stage4_gpu.sh",
+    "lab_sha256": "82268131a0007f8800a27694c093b725f4fffa1d97760e6f14fc299c0f74b9cb",
+    "git_sha256": "1bbc517e0d9ebdb97b3dd9f6513266822e37cdbe61b7da40b6f5bc694bc29809"
+  },
+  {
+    "path": "identity-link/closed-loop/stage4_pipeline.sh",
+    "lab_sha256": "baae89833f00377d39f49d4706f6cc3c840de75c9164951aa281f55c710fa958",
+    "git_sha256": "453e575e42dc96b69488d8e3e9f07ae2a08b4b5e974103dd18bbb1e7b58fc80e"
+  },
+  {
+    "path": "identity-link/closed-loop/stage4_policy_pipeline.sh",
+    "lab_sha256": "a9b5542986570b9aeed581c9d55bd695018637f5f288f5ca33f2840bf92e9d41",
+    "git_sha256": "2fa05b2d3678806546f49a7350d8a9ab32090a819ca506afde1fb7d53c82ef9a"
+  },
+  {
+    "path": "identity-link/closed-loop/stage4_resume.sh",
+    "lab_sha256": "20ca6922e13aba23e36ea8d8064ef705f6868965d07d31383e7e3deb9fc4ee09",
+    "git_sha256": "d75f0b42c1f97c54b42f35327a55df180b5f4a3507958987a7ed5f6c64c6bef1"
+  },
+  {
+    "path": "identity-link/closed-loop/target_follow_pipeline.sh",
+    "lab_sha256": "97ad5b064a9aa3d3f53115af000c611630dadcc0aae84b75ff34063f8817c9bb",
+    "git_sha256": "2d4a1784b89feef2bf433b5ff8909a0f7e8eab8a73e383fe641c2f68e4bda561"
+  },
+  {
+    "path": "identity-link/closed-loop/target_progress_gpu.sh",
+    "lab_sha256": "5d5a7e2ecdeae1559c15b9352d9901fc7c80e21d2193542e3a2540939c9a26a6",
+    "git_sha256": "ab9637c151db925e42922a52cf008f8a55823a415ba501c506f6b85210339736"
+  },
+  {
+    "path": "lid-geometry/launch.sh",
+    "lab_sha256": "72e4d9ff36f067334caec792bf5471fdce6f74f5e121fd8ce29e7682a3fde1ff",
+    "git_sha256": "b1349964af845dc9f74b86906c940e9b6a1ca36df9c722ae903fc5f3b57dd2c5"
+  },
+  {
+    "path": "placement-next/launch.sh",
+    "lab_sha256": "f16c74dcb9faca1b42a68e2ee078de3c0536c1d6b35475e2c602d1304203fb7d",
+    "git_sha256": "5ebfb2c7170828b4ff1c34687d4f50c09bdcdd712063c84a4779ad60b5f85d51"
+  },
+  {
+    "path": "soup-study/launch.sh",
+    "lab_sha256": "ea3e9c313254d9b4f47f1f2f29c5203d66dd2eca8db0324c96129709e93e0b89",
+    "git_sha256": "3c7cdba07db990579d7ef558fe75874a685f0c9c771d65a0bed611adc4de59ed"
+  }
+]
