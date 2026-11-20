@@ -24,6 +24,21 @@ V1 的场景 08 回放提供了自然完成和改写开爪后完成的轨迹。�
 - 独立初态按原始状态和稳定后状态哈希去重，并与历史训练、验证及 V1 结题新状态比对。所有四臂在同一 GPU 上用冻结清单执行。完整批次最多 128 集。
 - 主指标为官方 LIBERO 成功和按布局计的配对胜负。另报首个夹持和篮内释放的步数、释放是否保持到终局、非目标接触、总步数和耗时。场景 08 的收益门槛为改写 LoRA 相对基础策略至少在两个布局上获得净救援，总净胜为正，且普通集零回退。归因同时看自然 LoRA 对照。
 
+### 等训练步数的补充对照
+
+主实验按验证损失选中自然组第 600 步和改写组第 400 步。补充对照使用全部冻结挑战配对，在原 GPU 上增加自然组第 400 步和改写组第 600 步。按训练步数分别比较官方成功和汤罐入篮释放后是否保持到终局。沿用主实验初态，结果单独归档。
+
+在与主实验相同的模型环境运行。将 `ORIGINAL_SOURCE_DIR` 指向主实验存档的 `src-torch-state`，将 `EXPERIMENT_CODE_DIR` 指向包含本脚本的代码目录。
+
+```bash
+export PYTHONPATH="$ORIGINAL_SOURCE_DIR:$PERSONAL_RUN_DIR/python-extra"
+"$MODEL_PYTHON" -B "$EXPERIMENT_CODE_DIR/checkpoint_control.py" run \
+  --lab "$PERSONAL_V1_ROOT" --primary "$PERSONAL_RUN_DIR" \
+  --out "$PERSONAL_RUN_DIR/checkpoint-control"
+```
+
+将主实验归档和补充归档解压到各自的目录。以同样的 `--primary` 和 `--out` 参数在 CPU 运行 `checkpoint_control.py score`，可复核逐集证据并重算配对统计。
+
 ## 运行与证据
 
 在个人数据盘保留 V1 的项目、仿真环境和模型。模型侧 LeRobot 锁定 `772bc21ef1ab17b72e17ebb1593ff78725a21d55`，复用 V1 模型、处理器和分词器。用现有模型 Python 运行 `uv pip install --python "$MODEL_PYTHON" --target "$PERSONAL_RUN_DIR/python-extra" --no-deps -r requirements.txt`。启动时用 CPU 核验训练依赖、处理器哈希及一个小样本的 LeRobot v3 无损回读。
