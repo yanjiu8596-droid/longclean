@@ -49,6 +49,19 @@ export PYTHONPATH="$ORIGINAL_SOURCE_DIR:$PERSONAL_RUN_DIR/python-extra"
 
 在证据目录上运行 `checkpoint_recheck.py score --out "$PERSONAL_RECOVERY_RUN"` 可重算备卡结果。
 
+### 场景 08 难度标定
+
+历史开爪专项的四次基础策略失败都在官方初态 44。开发标定从原版 BDDL 的 96 个新重置种子中采样，以篮子、汤罐和奶酪盒的桌面坐标到初态 44 的归一化距离排序。最近的八个有效布局和另外八个随机布局各为一组。两组都用基础 π₀.₅、推理种子 8 和原生 OSC 520 步上限。先核对 BDDL、排除历史状态，并冻结初态和观测哈希，再运行策略。
+
+近邻组至少有两个不同布局在官方判定下失败，且失败数高于随机组，才用该方法挑选独立测试初态。全部候选坐标、排序分数、冻结清单、官方判定和持续释放证据一起保留。
+
+```bash
+bash run_layout_difficulty.sh "$PERSONAL_V1_ROOT" "$PERSONAL_RUN_DIR" \
+  "$PERSONAL_DEVELOPMENT_RUN" "$GPU_UUID"
+```
+
+启动前在个人数据盘创建 `PERSONAL_DEVELOPMENT_RUN`。脚本应和 `layout_difficulty.py`、`checkpoint_control.py` 位于该目录的 `src` 下。主实验的 `src-torch-state` 和 `logs/source.sha256` 提供固定的评测代码，其他输入由主实验的评测计划与重放清单提供。各阶段有独立日志与退出码，运行结束在 `transfer` 生成校验归档。
+
 ## 运行与证据
 
 在个人数据盘保留 V1 的项目、仿真环境和模型。模型侧 LeRobot 锁定 `772bc21ef1ab17b72e17ebb1593ff78725a21d55`，复用 V1 模型、处理器和分词器。用现有模型 Python 运行 `uv pip install --python "$MODEL_PYTHON" --target "$PERSONAL_RUN_DIR/python-extra" --no-deps -r requirements.txt`。启动时用 CPU 核验训练依赖、处理器哈希及一个小样本的 LeRobot v3 无损回读。
