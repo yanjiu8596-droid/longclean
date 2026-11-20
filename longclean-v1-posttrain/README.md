@@ -62,6 +62,19 @@ bash run_layout_difficulty.sh "$PERSONAL_V1_ROOT" "$PERSONAL_RUN_DIR" \
 
 启动前在个人数据盘创建 `PERSONAL_DEVELOPMENT_RUN`。脚本应和 `layout_difficulty.py`、`checkpoint_control.py` 位于该目录的 `src` 下。主实验的 `src-torch-state` 和 `logs/source.sha256` 提供固定的评测代码，其他输入由主实验的评测计划与重放清单提供。各阶段有独立日志与退出码，运行结束在 `transfer` 生成校验归档。
 
+### 汤罐释放停滞筛查
+
+从另一批原版 BDDL 重置种子筛查 96–160 个初态，探测种子交替使用 9、11。用历史初态 44 的三个种子核对探测信号。在新初态上，连续三步夹持记为抓稳，连续五步已松爪且入篮记为释放。抓稳 100 步后仍夹持、此前无连续释放，且检查时点在前 260 步内的布局可入选。筛查条件以启动时的 `protocol.json` 为准。
+
+至少获得 6 个停滞布局和 8 个及时释放布局才启动正式配对。最多取 12 个停滞布局，另取 8 个及时释放对照。每个布局在同一 GPU 上给四臂各运行种子 71、72。自然组使用第 600 步，修正组使用第 400 步。结果衡量按探测信号筛出来的布局上的收益，报告官方成功和持续释放两项配对胜负。
+
+```bash
+bash run_release_probe.sh "$PERSONAL_V1_ROOT" "$PERSONAL_RUN_DIR" \
+  "$PERSONAL_DEVELOPMENT_RUN" "$PERSONAL_PROBE_RUN" "$GPU_UUID"
+```
+
+在 `tmux` 内启动，并把 `release_probe.py`、`run_release_probe.sh` 和 `checkpoint_control.py` 放在 `PERSONAL_PROBE_RUN/src`。每阶段开始先核对 GPU 空闲。逐集文件随运行保存在个人数据盘，控制器在退出时生成证据归档和 SHA-256。正式汇总可在 CPU 上用 `release_probe.py score --run "$PERSONAL_PROBE_RUN"` 复核。
+
 ## 运行与证据
 
 在个人数据盘保留 V1 的项目、仿真环境和模型。模型侧 LeRobot 锁定 `772bc21ef1ab17b72e17ebb1593ff78725a21d55`，复用 V1 模型、处理器和分词器。用现有模型 Python 运行 `uv pip install --python "$MODEL_PYTHON" --target "$PERSONAL_RUN_DIR/python-extra" --no-deps -r requirements.txt`。启动时用 CPU 核验训练依赖、处理器哈希及一个小样本的 LeRobot v3 无损回读。
