@@ -39,6 +39,16 @@ export PYTHONPATH="$ORIGINAL_SOURCE_DIR:$PERSONAL_RUN_DIR/python-extra"
 
 将主实验归档和补充归档解压到各自的目录。以同样的 `--primary` 和 `--out` 参数在 CPU 运行 `checkpoint_control.py score`，可复核逐集证据并重算配对统计。
 
+原卡持续被占用时，可在一张空闲备卡上重做四检查点配对。将冻结的 `test-plan.json`、原版 `source.sha256` 和两臂的第 400、600 步检查点放到同一个输入目录，保持 `train/<arm>/step-XXXX` 结构。使用备卡环境的模型 Python，并将 `TABLECLEAR_SIM_PYTHON` 指向可执行的仿真 Python。备卡首先复查 BDDL 和各初态哈希，再用设备内重新冻结的初态跑四个检查点。该结果按设备单独报告。
+
+```bash
+"$MODEL_PYTHON" -B "$EXPERIMENT_CODE_DIR/checkpoint_recheck.py" run \
+  --inputs "$VERIFIED_INPUT_DIR" --source "$ORIGINAL_SOURCE_DIR" \
+  --lab "$PERSONAL_V1_ROOT" --out "$PERSONAL_RECOVERY_RUN" --gpu-uuid "$GPU_UUID"
+```
+
+在证据目录上运行 `checkpoint_recheck.py score --out "$PERSONAL_RECOVERY_RUN"` 可重算备卡结果。
+
 ## 运行与证据
 
 在个人数据盘保留 V1 的项目、仿真环境和模型。模型侧 LeRobot 锁定 `772bc21ef1ab17b72e17ebb1593ff78725a21d55`，复用 V1 模型、处理器和分词器。用现有模型 Python 运行 `uv pip install --python "$MODEL_PYTHON" --target "$PERSONAL_RUN_DIR/python-extra" --no-deps -r requirements.txt`。启动时用 CPU 核验训练依赖、处理器哈希及一个小样本的 LeRobot v3 无损回读。
