@@ -1,0 +1,13 @@
+{
+  "case": "ordinary-875104-s72",
+  "reference": "scene01-sauce-budget-diagnostic-20261124-terminal",
+  "reference_sha256": "bbd02554b71cc025ed44888da0dbe26b25cb070cd60c1d272b43af16ede143e3",
+  "fork": 569,
+  "end": 729,
+  "view_steps": [549, 559, 569],
+  "formal_budget": 520,
+  "scope": "Known development layout, post-budget diagnostic. A uses archived native commands. B checks the two-camera RGB-D point clouds for a floor-level slot that preserves the placed soup before changing a command. If there is no supported slot, B returns to A at the fork.",
+  "geometry": {"payload_radius_m": 0.033, "occupant_radius_m": 0.033, "inner_half_width_m": 0.063, "grid_m": 0.001, "margin_m": 0.002, "centerline_y_half_width_m": 0.007},
+  "geometry_scope": "Horizontal projected footprints with both cans supported at the same level. The Y centerline is the narrow axis known from this development layout; its position and current basket orientation must be estimated from RGB-D. Also score the full aperture with the Y restriction removed.",
+  "readouts": "Track both official predicates, first and last simultaneous success, last 20 physical states released and in basket together, basket-floor/wall and can-can contacts, intervention/abstention and any regression of the placed soup. Follow the matched diagnostic horizon even after a transient predicate."
+}
